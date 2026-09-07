@@ -25,20 +25,47 @@
  *   DELETE /vocabulary/:id      -> delete one record
  *   POST   /ai/correct          -> Gemini English feedback for one sentence
  *
+ * Learning engine (added stage 3), all in src/learning.js:
+ *   GET    /learner                                  -> profile, provisional on first contact
+ *   PATCH  /learner                                  -> session mode, interests, skill estimates
+ *   GET    /daily-plan                               -> today's stored plan, or null
+ *   POST   /daily-plan                               -> create it, or return the stored one unchanged
+ *   POST   /daily-plan/activity/:id/complete         -> mark one activity done
+ *   GET    /learning-targets                         -> recurring mistakes and their lifecycle
+ *   POST   /learning-targets/evidence                -> record errors/successes against targets
+ *   GET    /learning-config                          -> the planner's own rules, read-only
+ *   GET    /ai/usage                                 -> internal AI call accounting
+ *
+ * Those routes call NO AI. Today's Plan is produced by deterministic
+ * application code in src/planner.js, so planning behaviour is stable,
+ * explainable, and costs no Gemini quota. Gemini's job, in a later slice, is to
+ * generate CONTENT for the objectives the planner has already chosen.
+ *
  * AI model (added stage 2):
  *   POST /ai/correct is authenticated with the SAME X-Sync-Key mechanism, so a
  *   random visitor to the public GitHub Pages code cannot spend the Gemini free
  *   tier. GEMINI_API_KEY is a Worker secret, read only server-side, sent to
- *   Google in a request header, and never returned, logged or echoed. Nothing
- *   from this endpoint is written to D1.
+ *   Google in a request header, and never returned, logged or echoed. The only
+ *   thing this endpoint writes to D1 is an anonymous per-day call counter; no
+ *   sentence and no model output is stored.
  */
+
+import {
+  json,
+  methodNotAllowed,
+  missingDb,
+  readJsonBody,
+  normalizeText,
+  clampTimestamp,
+  safeMessage
+} from "./util.js";
+import { routeLearning, isLearningPath, recordAiUsage } from "./learning.js";
+import { GENERATOR as PLANNER_GENERATOR } from "./planner.js";
 
 const MAX_TEXT_LEN = 500;   // per english/hebrew field
 const MIN_KEY_LEN = 20;     // reject weak sync keys outright
 const MAX_KEY_LEN = 512;
 const MAX_ID_LEN = 64;
-const MAX_BODY_BYTES = 8 * 1024;
-const CLOCK_SKEW_MS = 5 * 60 * 1000;
 
 /* --- AI correction (stage 2) --- */
 const MAX_SENTENCE_LEN = 300;      // one sentence, not an essay
@@ -103,12 +130,13 @@ async function route(request, env, cors) {
       {
         ok: true,
         service: "english-learning-poc sync",
-        stage: "sync + ai-correction POC",
+        stage: "sync + ai-correction POC + learning engine",
         time: new Date().toISOString(),
         dbBound: !!env.DB,
         pepperConfigured: !!env.SYNC_PEPPER,
         geminiConfigured: !!env.GEMINI_API_KEY,
-        allowedOriginCount: allowedOrigins(env).length
+        allowedOriginCount: allowedOrigins(env).length,
+        planner: { generator: PLANNER_GENERATOR, usesAi: false }
       },
       200,
       cors
@@ -135,6 +163,16 @@ async function route(request, env, cors) {
   if (path === "/ai/correct") {
     if (method !== "POST") return methodNotAllowed(cors, "POST");
     return aiCorrect(request, env, cors);
+  }
+
+  // Learning engine. Auth happens here, once, with the same X-Sync-Key
+  // mechanism as everything else — learning.js never sees the raw key and
+  // never accepts an owner_hash from the client.
+  if (isLearningPath(path)) {
+    const auth = await authenticate(request, env);
+    if (auth.error) return json(auth.error, auth.status, cors);
+    const handled = await routeLearning(request, env, cors, path, method, auth.ownerHash);
+    if (handled) return handled;
   }
 
   return json({ error: "not_found", path: path }, 404, cors);
@@ -279,6 +317,11 @@ async function deleteVocabulary(request, env, cors, id) {
  *
  * GEMINI_API_KEY is read only here, server-side, and is sent to Google in a
  * request header (never a query string, never a response, never a log).
+ *
+ * The one thing this endpoint now writes to D1 is a usage counter (which day,
+ * which purpose, how many calls) so future batching has something to read. No
+ * sentence, no feedback, and no key is stored, and a failure to record the
+ * counter is swallowed rather than turned into an error for the learner.
  */
 async function aiCorrect(request, env, cors) {
   const auth = await authenticate(request, env);
@@ -338,14 +381,18 @@ async function aiCorrect(request, env, cors) {
   const model = geminiModel(env);
   const upstream = await callGemini(sentence, model, env);
   if (upstream.error) {
+    // Counted as a call that failed. Accounting never changes the response.
+    await recordAiUsage(env, auth.ownerHash, "correct", model, true);
     return json(redactObject(upstream.error, env), upstream.status, cors);
   }
 
   const shaped = validateFeedback(upstream.data, sentence);
   if (shaped.error) {
+    await recordAiUsage(env, auth.ownerHash, "correct", model, true);
     return json(redactObject(shaped.error, env), 502, cors);
   }
 
+  await recordAiUsage(env, auth.ownerHash, "correct", model, false);
   return json({ model: model, feedback: shaped.value, serverTime: Date.now() }, 200, cors);
 }
 
@@ -877,70 +924,6 @@ function corsHeaders(origin, env) {
 
 /* ---------------- helpers ---------------- */
 
-async function readJsonBody(request) {
-  let text;
-  try {
-    text = await request.text();
-  } catch (e) {
-    return { error: { error: "bad_body", message: "could not read request body" } };
-  }
-  if (text.length > MAX_BODY_BYTES) {
-    return { error: { error: "body_too_large", message: "body exceeds " + MAX_BODY_BYTES + " bytes" } };
-  }
-  if (!text) {
-    return { error: { error: "bad_body", message: "request body is empty; expected JSON" } };
-  }
-  let value;
-  try {
-    value = JSON.parse(text);
-  } catch (e) {
-    return { error: { error: "bad_json", message: safeMessage(e) } };
-  }
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return { error: { error: "bad_json", message: "body must be a JSON object" } };
-  }
-  return { value: value };
-}
-
-function normalizeText(v) {
-  if (typeof v !== "string") return "";
-  return v.trim().replace(/\s+/g, " ");
-}
-
-function clampTimestamp(v, now) {
-  const n = typeof v === "number" ? v : parseInt(v, 10);
-  if (!isFinite(n) || n <= 0) return now;
-  // A device with a fast clock must not be able to win every future conflict.
-  if (n > now + CLOCK_SKEW_MS) return now + CLOCK_SKEW_MS;
-  return Math.floor(n);
-}
-
-function missingDb() {
-  return {
-    error: "server_not_configured",
-    message: "D1 binding DB is missing. Check [[d1_databases]] binding = \"DB\" in wrangler.toml."
-  };
-}
-
-function methodNotAllowed(cors, allow) {
-  const headers = Object.assign({}, cors, { Allow: allow });
-  return json({ error: "method_not_allowed", allow: allow }, 405, headers);
-}
-
-function safeMessage(err) {
-  try {
-    return String((err && err.message) || err);
-  } catch (e) {
-    return "(unreadable error)";
-  }
-}
-
-function json(obj, status, headers) {
-  return new Response(JSON.stringify(obj, null, 2), {
-    status: status,
-    headers: Object.assign(
-      { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" },
-      headers || {}
-    )
-  });
-}
+/* json, readJsonBody, normalizeText, clampTimestamp, missingDb,
+   methodNotAllowed and safeMessage now live in util.js, shared unchanged with
+   the learning-engine routes so both files answer requests identically. */

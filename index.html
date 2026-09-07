@@ -253,6 +253,72 @@
     letter-spacing: 0.03em;
   }
   .ai-alt .v { flex: 1 1 auto; overflow-wrap: anywhere; }
+
+  /* ---- Today's Plan (first real product view, added for the learning engine) ---- */
+  #todayCard { border-color: #c9d8f4; }
+  .today-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+  .today-head h2 { margin: 0; }
+  .today-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 14px;
+    font-size: 13px;
+    color: var(--muted);
+    margin: 8px 0 0;
+  }
+  .today-topic { font-weight: 650; color: var(--ink); }
+  .today-modes { display: flex; gap: 6px; }
+  .today-modes button { flex: 1 1 0; padding: 8px 6px; font-size: 13px; }
+  .today-modes button[aria-pressed="true"] {
+    background: var(--accent);
+    color: var(--accent-ink);
+    border-color: var(--accent);
+  }
+  .plan-item {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    padding: 11px 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .plan-item:last-child { border-bottom: 0; }
+  .plan-item .body { flex: 1 1 auto; min-width: 0; }
+  .plan-item .name { font-weight: 650; font-size: 15px; }
+  .plan-item .obj {
+    font-size: 13px;
+    color: var(--muted);
+    margin-top: 3px;
+    overflow-wrap: anywhere;
+  }
+  .plan-item.done .name { text-decoration: line-through; color: var(--muted); }
+  .plan-item .act { flex: 0 0 auto; display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+  .plan-item .mins { font-size: 12px; color: var(--muted); white-space: nowrap; }
+  .plan-why {
+    font-size: 13px;
+    color: var(--muted);
+    background: #f2f5fb;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 9px 11px;
+    margin: 0;
+  }
+  .plan-why ul { margin: 5px 0 0; padding-left: 18px; }
+  .plan-why li { margin: 2px 0; }
+  #todayError {
+    font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    background: var(--fail-bg);
+    color: var(--fail-ink);
+    border: 1px solid #f3c9c9;
+    border-radius: 10px;
+    padding: 10px;
+    max-height: 200px;
+    overflow-y: auto;
+    margin: 0;
+  }
+  #todayError[hidden], #todayPlan[hidden], #todayCarried[hidden] { display: none; }
+  #todayCarried { color: var(--pass-ink); }
 </style>
 </head>
 <body>
@@ -260,6 +326,58 @@
 
   <h1>English Learning HTML POC</h1>
   <p class="sub">Browser-native microphone, speech recognition and speech synthesis check. Nothing is sent anywhere by this page.</p>
+
+  <!-- ================= Today's Plan =================
+       The first real product view, as opposed to the technical POC cards
+       below it. It proves the learning engine end to end: the plan is built by
+       the Worker's deterministic planner (no AI call), stored in D1, and the
+       same on every device using the same sync key.
+
+       It reuses the Worker URL and sync key from the Cloud sync test card, so
+       there is exactly one place to configure and one identity in play.
+       ================================================ -->
+  <div class="card stack" id="todayCard">
+    <div class="today-head">
+      <h2>Today&rsquo;s Plan</h2>
+      <span id="todayProgress" class="chip">—</span>
+    </div>
+    <p class="note" style="margin-top:0">
+      Built by the Worker&rsquo;s planner from your saved learning state. No AI call is made to
+      produce it, and reopening or switching device shows the same plan.
+    </p>
+
+    <div class="today-modes" role="group" aria-label="Session length">
+      <button type="button" class="secondary" id="btnModeQuick" data-mode="quick" aria-pressed="false">Quick<br>~13 min</button>
+      <button type="button" class="secondary" id="btnModeStandard" data-mode="standard" aria-pressed="true">Standard<br>~30 min</button>
+      <button type="button" class="secondary" id="btnModeFull" data-mode="full" aria-pressed="false">Full<br>~52 min</button>
+    </div>
+
+    <button id="btnTodayLoad" type="button">Load / create today&rsquo;s plan</button>
+    <button id="btnTodayReplan" class="secondary" type="button">Replan today (explicit)</button>
+
+    <p class="status" id="todayStatus">Idle. Save your Worker URL and sync key below first, then press Load.</p>
+    <pre id="todayError" hidden>&mdash;</pre>
+
+    <div id="todayPlan" hidden>
+      <hr class="divider">
+      <p class="today-meta">
+        <span class="today-topic" id="todayTopic">—</span>
+        <span id="todayMode">—</span>
+        <span id="todayMinutes">—</span>
+      </p>
+      <div id="todayActivities"></div>
+      <p class="note" id="todayCarried" hidden>&mdash;</p>
+      <hr class="divider">
+      <div class="plan-why">
+        Why this plan
+        <ul id="todayWhy"></ul>
+      </div>
+      <p class="note" id="todayProvisional" hidden>
+        Your profile is still provisional — no initial assessment has been taken yet, so the plan
+        starts from neutral estimates rather than a measured level.
+      </p>
+    </div>
+  </div>
 
   <div class="card">
     <button id="btnStart" type="button">Start speaking</button>
@@ -1857,6 +1975,418 @@
     }
   } catch (e) {
     /* The speech tests and the sync card must keep working if this section fails. */
+    try { window.console && window.console.error && window.console.error(e); } catch (e2) { /* ignore */ }
+  }
+})();
+</script>
+<script>
+/* ------------------------------------------------------------------
+   Today's Plan — the first real product view.
+
+   Its own IIFE, like every other section, so a failure here cannot take
+   down the microphone, speech, sync or AI cards. Nothing above is edited.
+
+   It deliberately reads the Worker URL and sync key straight out of the
+   Cloud sync card's inputs rather than keeping a second copy: one place
+   to configure, one identity, no chance of the two drifting apart.
+
+   The plan itself is never cached in this browser. D1 is the single
+   source of truth, which is exactly what makes "same plan on the Mac and
+   the iPhone" and "refresh does not reroll the day" observable rather
+   than merely intended.
+   ------------------------------------------------------------------ */
+(function () {
+  "use strict";
+
+  var MIN_KEY_LEN = 20;
+  var MODES = { quick: "Quick", standard: "Standard", full: "Full" };
+
+  var statusEl, errorEl, planEl, actsEl, whyEl, progressEl;
+  var topicEl, modeEl, minutesEl, provisionalEl, carriedEl;
+  var btnLoad, btnReplan, modeButtons = [];
+  var chosenMode = "standard";
+  var busy = false;
+
+  function byId(id) { return document.getElementById(id); }
+
+  function status(msg) { if (statusEl) { statusEl.textContent = msg; } }
+
+  function clearError() {
+    if (!errorEl) { return; }
+    errorEl.textContent = "—";
+    errorEl.hidden = true;
+  }
+
+  /* Same failure style as the other cards: operation, request, status, body. */
+  function showError(operation, lines) {
+    if (!errorEl) { return; }
+    errorEl.textContent = ["ERROR during: " + operation].concat(lines).join("\n");
+    errorEl.hidden = false;
+  }
+
+  function config() {
+    var apiEl = byId("syncApi");
+    var keyEl = byId("syncKey");
+    return {
+      base: String((apiEl && apiEl.value) || "").trim().replace(/\/+$/, ""),
+      key: String((keyEl && keyEl.value) || "").trim()
+    };
+  }
+
+  function configProblem(cfg) {
+    if (!cfg.base) { return "Worker URL is empty. Fill it in the Cloud sync card and press Save."; }
+    if (!/^https?:\/\//i.test(cfg.base)) { return "Worker URL must start with https://"; }
+    if (!cfg.key) { return "Sync key is empty. Press Generate in the Cloud sync card, then Save."; }
+    if (cfg.key.length < MIN_KEY_LEN) {
+      return "Sync key is only " + cfg.key.length + " characters. At least " + MIN_KEY_LEN + " are required.";
+    }
+    return null;
+  }
+
+  function setBusy(v) {
+    busy = v;
+    btnLoad.disabled = v;
+    btnReplan.disabled = v;
+    for (var i = 0; i < modeButtons.length; i++) { modeButtons[i].disabled = v; }
+  }
+
+  function api(operation, method, path, bodyObj) {
+    var cfg = config();
+    var problem = configProblem(cfg);
+    if (problem) {
+      showError(operation, ["Configuration problem: " + problem]);
+      status("Not configured.");
+      return Promise.reject(new Error(problem));
+    }
+
+    var init = {
+      method: method,
+      headers: { "X-Sync-Key": cfg.key },
+      mode: "cors",
+      cache: "no-store",
+      credentials: "omit"
+    };
+    if (bodyObj !== undefined && bodyObj !== null) {
+      init.headers["Content-Type"] = "application/json";
+      init.body = JSON.stringify(bodyObj);
+    }
+
+    var started = Date.now();
+    return fetch(cfg.base + path, init).then(function (res) {
+      return res.text().then(function (text) {
+        var elapsed = Date.now() - started;
+        var data = null;
+        try { data = JSON.parse(text); } catch (e) { data = null; }
+        if (!res.ok || !data) {
+          showError(operation, [
+            method + " " + cfg.base + path,
+            "HTTP " + res.status + " " + (res.statusText || "") + "  (" + elapsed + " ms)",
+            "",
+            text.slice(0, 1200) || "(empty body)"
+          ]);
+          throw new Error("HTTP " + res.status);
+        }
+        clearError();
+        return data;
+      });
+    }, function (networkErr) {
+      showError(operation, [
+        method + " " + cfg.base + path,
+        "The request never reached the Worker.",
+        String((networkErr && networkErr.message) || networkErr),
+        "",
+        "Usual causes: wrong Worker URL, no network, or this page's origin is",
+        "missing from ALLOWED_ORIGINS in the Worker configuration."
+      ]);
+      throw networkErr;
+    });
+  }
+
+  /* The learner's local day. The Worker uses this to decide which day's plan
+     to return, so a late-evening session in Israel does not get yesterday's. */
+  function tzOffsetMinutes() {
+    try { return -new Date().getTimezoneOffset(); } catch (e) { return 0; }
+  }
+
+  function setMode(mode) {
+    chosenMode = MODES[mode] ? mode : "standard";
+    for (var i = 0; i < modeButtons.length; i++) {
+      var b = modeButtons[i];
+      b.setAttribute("aria-pressed", b.getAttribute("data-mode") === chosenMode ? "true" : "false");
+    }
+  }
+
+  function titleFor(a) {
+    return a.title || a.type;
+  }
+
+  /* A short, honest summary of what an activity is FOR. The exercises
+     themselves do not exist yet — this slice proves the objectives. */
+  function objectiveText(a) {
+    var parts = [];
+    var spec = a.spec || {};
+    if (a.type === "vocabulary") {
+      var rev = (spec.reviewItemIds || []).length;
+      var neu = (spec.newItemIds || []).length;
+      if (rev) { parts.push(rev + " to review"); }
+      if (neu) { parts.push(neu + " saved words to learn"); }
+      if (spec.newWordsToSource) { parts.push(spec.newWordsToSource + " new words to be generated later"); }
+      if (spec.dueTotal) { parts.push(spec.dueTotal + " due in total"); }
+    } else if (a.type === "reading") {
+      if (spec.difficulty) { parts.push(spec.difficulty); }
+      if (spec.targetWordCount) { parts.push("~" + spec.targetWordCount + " words"); }
+      if (spec.comprehensionQuestions) { parts.push(spec.comprehensionQuestions + " questions"); }
+    } else if (a.type === "speaking") {
+      if (spec.turns) { parts.push("~" + spec.turns + " turns"); }
+      parts.push("objectives, not requirements");
+    } else if (a.type === "sentence_practice" && spec.itemCount) {
+      parts.push(spec.itemCount + " items");
+    }
+
+    var objectives = a.objectives || [];
+    if (objectives.length) {
+      var labels = [];
+      for (var i = 0; i < objectives.length; i++) {
+        labels.push(prettyTarget(objectives[i]));
+      }
+      parts.unshift(labels.join(", "));
+    }
+    return parts.join(" · ");
+  }
+
+  function prettyTarget(id) {
+    return String(id || "")
+      .split("_")
+      .filter(Boolean)
+      .map(function (w) { return w.charAt(0).toUpperCase() + w.slice(1); })
+      .join(" ");
+  }
+
+  function render(plan) {
+    if (!plan) {
+      planEl.hidden = true;
+      progressEl.textContent = "—";
+      progressEl.className = "chip";
+      return;
+    }
+
+    planEl.hidden = false;
+    topicEl.textContent = "Topic: " + (plan.topicLabel || "—");
+    modeEl.textContent = (MODES[plan.mode] || plan.mode) + " session";
+    minutesEl.textContent = "~" + plan.totalMinutes + " min";
+    setMode(plan.mode);
+
+    var done = (plan.progress && plan.progress.complete) || 0;
+    var total = (plan.progress && plan.progress.total) || 0;
+    progressEl.textContent = done + "/" + total + " complete";
+    progressEl.className = "chip" + (total > 0 && done === total ? " pass" : "");
+
+    provisionalEl.hidden = true;
+
+    /* Work finished earlier today that this session length does not include.
+       Changing mode changes what today asks for; it never takes back credit
+       for what has already been done, so this is shown rather than silently
+       dropped. Switching back to a mode containing it restores the tick. */
+    var outside = plan.completedOutsidePlan || [];
+    if (carriedEl) {
+      if (outside.length) {
+        var names = [];
+        for (var k = 0; k < outside.length; k++) {
+          names.push(prettyTarget(outside[k].type));
+        }
+        carriedEl.textContent =
+          "Also completed today, outside this session length: " + names.join(", ") +
+          ". Switch to a longer session to see it credited again.";
+        carriedEl.hidden = false;
+      } else {
+        carriedEl.hidden = true;
+      }
+    }
+
+    while (actsEl.firstChild) { actsEl.removeChild(actsEl.firstChild); }
+
+    var acts = plan.activities || [];
+    for (var i = 0; i < acts.length; i++) {
+      (function (a) {
+        var row = document.createElement("div");
+        row.className = "plan-item" + (a.status === "complete" ? " done" : "");
+
+        var body = document.createElement("div");
+        body.className = "body";
+
+        var name = document.createElement("div");
+        name.className = "name";
+        name.textContent = titleFor(a);
+        body.appendChild(name);
+
+        var obj = objectiveText(a);
+        if (obj) {
+          var objEl = document.createElement("div");
+          objEl.className = "obj";
+          objEl.textContent = obj;
+          body.appendChild(objEl);
+        }
+
+        var act = document.createElement("div");
+        act.className = "act";
+
+        var mins = document.createElement("span");
+        mins.className = "mins";
+        mins.textContent = a.estimatedMinutes + " min";
+        act.appendChild(mins);
+
+        if (a.status === "complete") {
+          var chip = document.createElement("span");
+          chip.className = "chip pass";
+          chip.textContent = "done";
+          act.appendChild(chip);
+        } else if (a.status === "skipped") {
+          var skipped = document.createElement("span");
+          skipped.className = "chip";
+          skipped.textContent = "skipped";
+          act.appendChild(skipped);
+        } else {
+          var btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = "mini";
+          btn.textContent = "Mark done";
+          btn.addEventListener("click", function () { complete(a); });
+          act.appendChild(btn);
+        }
+
+        row.appendChild(body);
+        row.appendChild(act);
+        actsEl.appendChild(row);
+      }(acts[i]));
+    }
+
+    while (whyEl.firstChild) { whyEl.removeChild(whyEl.firstChild); }
+    var reasons = plan.rationale || [];
+    for (var j = 0; j < reasons.length; j++) {
+      var li = document.createElement("li");
+      li.textContent = reasons[j];
+      whyEl.appendChild(li);
+    }
+  }
+
+  function loadOrCreate(replan) {
+    if (busy) { return; }
+    setBusy(true);
+    status(replan ? "Replanning today…" : "Loading today’s plan…");
+
+    var payload = {
+      mode: chosenMode,
+      timezoneOffsetMinutes: tzOffsetMinutes()
+    };
+    if (replan) { payload.replan = true; }
+
+    api("POST /daily-plan", "POST", "/daily-plan", payload).then(function (data) {
+      render(data.plan);
+      var reason = data.reason === "existing_plan_returned"
+        ? "Loaded the plan already stored for " + data.date + " — unchanged."
+        : "Created a plan for " + data.date + " (" + data.reason + ").";
+      var carried = data.carriedOverCompletions || 0;
+      if (carried > 0) {
+        reason += " Kept " + carried + " completed activit" + (carried === 1 ? "y" : "ies") + ".";
+      }
+      status(reason + " Generated by: " + ((data.plan && data.plan.generator) || "?") + " (no AI call).");
+      return checkProvisional();
+    })["catch"](function (e) {
+      if (String(e && e.message).indexOf("HTTP") !== 0) { status("Failed."); }
+      else { status("Failed. See the error above."); }
+    })["then"](function () { setBusy(false); }, function () { setBusy(false); });
+  }
+
+  function checkProvisional() {
+    return api("GET /learner", "GET", "/learner", null).then(function (data) {
+      provisionalEl.hidden = !(data.profile && data.profile.provisional);
+    }, function () { /* the plan is already shown; this is extra context only */ });
+  }
+
+  function complete(activity) {
+    if (busy) { return; }
+    setBusy(true);
+    status("Marking “" + titleFor(activity) + "” complete…");
+
+    api(
+      "POST /daily-plan/activity/" + activity.activityId + "/complete",
+      "POST",
+      "/daily-plan/activity/" + encodeURIComponent(activity.activityId) + "/complete",
+      { timezoneOffsetMinutes: tzOffsetMinutes() }
+    ).then(function (data) {
+      render(data.plan);
+      status("Saved to the cloud. Refresh or open another device — it stays complete.");
+    })["catch"](function () {
+      status("Failed. See the error above.");
+    })["then"](function () { setBusy(false); }, function () { setBusy(false); });
+  }
+
+  function init() {
+    statusEl = byId("todayStatus");
+    errorEl = byId("todayError");
+    planEl = byId("todayPlan");
+    actsEl = byId("todayActivities");
+    whyEl = byId("todayWhy");
+    progressEl = byId("todayProgress");
+    topicEl = byId("todayTopic");
+    modeEl = byId("todayMode");
+    minutesEl = byId("todayMinutes");
+    provisionalEl = byId("todayProvisional");
+    carriedEl = byId("todayCarried");
+    btnLoad = byId("btnTodayLoad");
+    btnReplan = byId("btnTodayReplan");
+
+    if (!statusEl || !btnLoad || !btnReplan || !actsEl) { return; }
+
+    var ids = ["btnModeQuick", "btnModeStandard", "btnModeFull"];
+    for (var i = 0; i < ids.length; i++) {
+      var b = byId(ids[i]);
+      if (!b) { continue; }
+      modeButtons.push(b);
+      (function (button) {
+        button.addEventListener("click", function () {
+          setMode(button.getAttribute("data-mode"));
+          // A mode change is one of the explicit reasons a plan may be
+          // rebuilt, so ask the Worker straight away rather than waiting.
+          loadOrCreate(false);
+        });
+      }(b));
+    }
+
+    btnLoad.addEventListener("click", function () { loadOrCreate(false); });
+    btnReplan.addEventListener("click", function () { loadOrCreate(true); });
+
+    clearError();
+    setMode("standard");
+
+    // If the sync card already has a saved key, show today's stored plan
+    // without creating anything. Opening the app must never be what decides
+    // the day; only Load / a mode change / an explicit replan does.
+    var cfg = config();
+    if (!configProblem(cfg)) {
+      status("Checking for a stored plan…");
+      api("GET /daily-plan", "GET", "/daily-plan?tz=" + encodeURIComponent(String(tzOffsetMinutes())), null)
+        .then(function (data) {
+          if (data.plan) {
+            render(data.plan);
+            status("Stored plan for " + data.date + ", loaded from the cloud.");
+            return checkProvisional();
+          }
+          status("No plan yet for today. Press Load to create one.");
+        })["catch"](function () {
+          status("Could not reach the Worker. See the error above.");
+        });
+    }
+  }
+
+  try {
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", init);
+    } else {
+      init();
+    }
+  } catch (e) {
+    /* Every other section must keep working if this one fails. */
     try { window.console && window.console.error && window.console.error(e); } catch (e2) { /* ignore */ }
   }
 })();

@@ -1,82 +1,108 @@
 /**
- * Test doubles for the Worker: an in-memory stand-in for D1 and a controllable
+ * Test doubles for the Worker: a real-SQLite stand-in for D1 and a controllable
  * stand-in for the Gemini HTTP endpoint. No network, no secrets, no Cloudflare.
  */
+import { DatabaseSync } from "node:sqlite";
+import { readFileSync, readdirSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
-/* A D1 stub that understands exactly the four statements worker.js issues.
-   It is deliberately literal: if the SQL changes, these tests should fail. */
+/**
+ * A D1 double backed by real SQLite (node:sqlite), running the project's real
+ * schema.sql plus every file in migrations/.
+ *
+ * The previous double hand-implemented the four statements worker.js issued.
+ * That does not scale to the learning engine's joins, upserts and ordering, and
+ * worse, it could not catch a mistake in the SQL itself. Running the actual
+ * migrations against a real engine means the tests fail if a migration is
+ * wrong, a column is missing, or a statement does not mean what it looks like.
+ *
+ * Still no network, no Cloudflare, no secrets: an in-memory database per test.
+ */
 export function makeDb() {
-  const rows = new Map(); // `${owner_hash} ${id}` -> row
+  const db = new DatabaseSync(":memory:");
+  db.exec(readSchema());
 
-  function key(owner, id) { return owner + " " + id; }
+  function normalizeArgs(args) {
+    // node:sqlite refuses undefined and booleans; D1 accepts both.
+    return args.map((a) => {
+      if (a === undefined) return null;
+      if (typeof a === "boolean") return a ? 1 : 0;
+      return a;
+    });
+  }
 
-  return {
-    rows,
+  const api = {
+    /** Vocabulary rows as a Map, so the pre-existing sync tests that inspect
+        env.DB.rows keep working against the real table. */
+    get rows() {
+      const out = new Map();
+      for (const r of db.prepare("SELECT * FROM vocabulary").all()) {
+        out.set(r.owner_hash + " " + r.id, r);
+      }
+      return out;
+    },
+    /** Escape hatch for tests that need to seed state directly. */
+    exec(sql) { db.exec(sql); },
+    query(sql, ...args) { return db.prepare(sql).all(...normalizeArgs(args)); },
     prepare(sql) {
       return {
         bind(...args) {
+          const bound = normalizeArgs(args);
           return {
             async all() {
-              if (!sql.startsWith("SELECT id, english") || !sql.includes("ORDER BY")) {
-                throw new Error("unexpected all() SQL: " + sql);
-              }
-              const owner = args[0];
-              const out = [...rows.values()]
-                .filter((r) => r.owner_hash === owner)
-                .map((r) => ({
-                  id: r.id,
-                  english: r.english,
-                  hebrew: r.hebrew,
-                  createdAt: r.createdAt,
-                  updatedAt: r.updatedAt
-                }))
-                .sort((a, b) => (b.updatedAt - a.updatedAt) || (a.id < b.id ? -1 : 1));
-              return { results: out };
+              return { results: db.prepare(sql).all(...bound), success: true };
             },
             async first() {
-              if (!sql.includes("WHERE owner_hash = ? AND id = ?")) {
-                throw new Error("unexpected first() SQL: " + sql);
-              }
-              const r = rows.get(key(args[0], args[1]));
-              if (!r) return null;
-              return {
-                id: r.id,
-                english: r.english,
-                hebrew: r.hebrew,
-                createdAt: r.createdAt,
-                updatedAt: r.updatedAt
-              };
+              const row = db.prepare(sql).get(...bound);
+              return row === undefined ? null : row;
             },
             async run() {
-              if (sql.startsWith("INSERT INTO vocabulary")) {
-                const [owner_hash, id, english, hebrew, createdAt, updatedAt] = args;
-                const k = key(owner_hash, id);
-                const existing = rows.get(k);
-                if (!existing) {
-                  rows.set(k, { owner_hash, id, english, hebrew, createdAt, updatedAt });
-                  return { meta: { changes: 1 } };
-                }
-                // ON CONFLICT ... WHERE excluded.updatedAt >= vocabulary.updatedAt
-                if (updatedAt >= existing.updatedAt) {
-                  existing.english = english;
-                  existing.hebrew = hebrew;
-                  existing.updatedAt = updatedAt;
-                  return { meta: { changes: 1 } };
-                }
-                return { meta: { changes: 0 } };
-              }
-              if (sql.startsWith("DELETE FROM vocabulary")) {
-                const k = key(args[0], args[1]);
-                const had = rows.delete(k);
-                return { meta: { changes: had ? 1 : 0 } };
-              }
-              throw new Error("unexpected run() SQL: " + sql);
+              const info = db.prepare(sql).run(...bound);
+              return { meta: { changes: Number(info.changes) || 0 }, success: true };
             }
           };
+        },
+        async all() { return { results: db.prepare(sql).all(), success: true }; },
+        async first() {
+          const row = db.prepare(sql).get();
+          return row === undefined ? null : row;
+        },
+        async run() {
+          const info = db.prepare(sql).run();
+          return { meta: { changes: Number(info.changes) || 0 }, success: true };
         }
       };
     }
   };
+  return api;
+}
+
+let schemaCache = null;
+
+/** schema.sql (migration 0001, already live) + every numbered migration,
+    in filename order — exactly what the remote database has been given. */
+function readSchema() {
+  if (schemaCache !== null) return schemaCache;
+  const here = dirname(fileURLToPath(import.meta.url));
+  const workerDir = join(here, "..");
+  let sql = readFileSync(join(workerDir, "schema.sql"), "utf8");
+  const migrationsDir = join(workerDir, "migrations");
+  for (const name of readdirSync(migrationsDir).filter((f) => f.endsWith(".sql")).sort()) {
+    sql += "\n" + readFileSync(join(migrationsDir, name), "utf8");
+  }
+  schemaCache = sql;
+  return sql;
+}
+
+/** Exposed so a test can assert the migrations are additive. */
+export function migrationSql() {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const migrationsDir = join(here, "..", "migrations");
+  return readdirSync(migrationsDir)
+    .filter((f) => f.endsWith(".sql"))
+    .sort()
+    .map((f) => ({ name: f, sql: readFileSync(join(migrationsDir, f), "utf8") }));
 }
 
 export const TEST_PEPPER = "test-pepper-value-not-the-real-one";

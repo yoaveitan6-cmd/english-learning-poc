@@ -515,15 +515,88 @@ test("/ai/correct honours the same origin allowlist as the sync endpoints", asyn
   );
 });
 
-/* ---------------- no persistence ---------------- */
+/* ---------------- persistence: counters only ---------------- */
 
-test("an AI request writes nothing to D1", async () => {
+test("an AI request stores no vocabulary, sentence or feedback", async () => {
   await withGemini(
     () => jsonResponse(200, geminiOk(SAMPLE_FEEDBACK)),
     async () => {
       const env = makeEnv();
       await call(correctReq("Yesterday I go to the store."), env);
-      assert.equal(env.DB.rows.size, 0);
+      assert.equal(env.DB.rows.size, 0, "no vocabulary row was created");
+      // The only write is an anonymous counter. Prove the sentence and the
+      // model's answer are nowhere in the database.
+      const dump = JSON.stringify(env.DB.query("SELECT * FROM ai_usage_daily"));
+      assert.ok(!dump.includes("Yesterday I go"));
+      assert.ok(!dump.includes(SAMPLE_FEEDBACK.corrected));
+      assert.ok(!dump.includes(TEST_SYNC_KEY));
+      assert.ok(!dump.includes(TEST_GEMINI_KEY));
+    }
+  );
+});
+
+/* ---------------- AI usage accounting ---------------- */
+
+test("a successful AI call is counted by day and purpose", async () => {
+  await withGemini(
+    () => jsonResponse(200, geminiOk(SAMPLE_FEEDBACK)),
+    async () => {
+      const env = makeEnv();
+      await call(correctReq("Yesterday I go to the store."), env);
+      await call(correctReq("She have three cats."), env);
+
+      const usage = await call(req("GET", "/ai/usage"), env);
+      assert.equal(usage.res.status, 200);
+      assert.equal(usage.body.totalCalls, 2);
+      assert.equal(usage.body.usage[0].purpose, "correct");
+      assert.equal(usage.body.usage[0].failures, 0);
+      assert.match(usage.body.note, /does not model or enforce/i);
+    }
+  );
+});
+
+test("a failed AI call is counted as a failure, and the error is unchanged", async () => {
+  await withGemini(
+    () => jsonResponse(429, { error: { status: "RESOURCE_EXHAUSTED", message: "quota" } }),
+    async () => {
+      const env = makeEnv();
+      const r = await call(correctReq("Yesterday I go to the store."), env);
+      assert.equal(r.res.status, 429, "accounting must not change the response");
+      assert.equal(r.body.error, "ai_rate_limited");
+
+      const usage = await call(req("GET", "/ai/usage"), env);
+      assert.equal(usage.body.totalCalls, 1);
+      assert.equal(usage.body.usage[0].failures, 1);
+    }
+  );
+});
+
+test("usage is per sync identity", async () => {
+  await withGemini(
+    () => jsonResponse(200, geminiOk(SAMPLE_FEEDBACK)),
+    async () => {
+      const env = makeEnv();
+      await call(correctReq("Yesterday I go to the store."), env);
+      const other = await call(req("GET", "/ai/usage", { key: "q".repeat(40) }), env);
+      assert.equal(other.body.totalCalls, 0);
+    }
+  );
+});
+
+test("a broken usage counter never breaks the AI answer", async () => {
+  await withGemini(
+    () => jsonResponse(200, geminiOk(SAMPLE_FEEDBACK)),
+    async () => {
+      const env = makeEnv();
+      // Simulate a database that cannot record accounting at all.
+      const realPrepare = env.DB.prepare.bind(env.DB);
+      env.DB.prepare = (sql) => {
+        if (sql.includes("ai_usage_daily")) throw new Error("no such table");
+        return realPrepare(sql);
+      };
+      const r = await call(correctReq("Yesterday I go to the store."), env);
+      assert.equal(r.res.status, 200);
+      assert.equal(r.body.feedback.corrected, SAMPLE_FEEDBACK.corrected);
     }
   );
 });
