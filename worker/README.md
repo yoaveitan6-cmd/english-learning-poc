@@ -117,6 +117,7 @@ The Worker computes `owner_hash = HMAC-SHA256(SYNC_PEPPER, syncKey)` and stores 
 | `GET` | `/vocabulary` | — | `{ records: [...], count, serverTime }` |
 | `POST` | `/vocabulary` | `{ id?, english, hebrew?, createdAt?, updatedAt? }` | `{ record, applied, reason }` |
 | `DELETE` | `/vocabulary/:id` | — | `{ id, deleted, serverTime }` |
+| `POST` | `/ai/correct` | `{ sentence }` | `{ model, feedback, serverTime }` |
 
 `POST` upserts exactly one row. If `id` is omitted the Worker generates a UUID.
 An update is skipped when its `updatedAt` is older than the stored row's
@@ -137,6 +138,99 @@ replaces or clears the whole collection, so one device can never wipe another's 
 * `ALLOWED_ORIGINS` restricts which websites a browser will let call this Worker.
 * This is deliberately not a login system. It is the smallest thing that keeps a
   reader of the public repository from reaching your data.
+
+---
+
+## AI correction endpoint (stage 2)
+
+`POST /ai/correct` sends one English sentence to the Gemini Developer API and returns
+structured learning feedback. It is a pure request/response proxy — **nothing is written
+to D1**.
+
+```
+browser  ── X-Sync-Key ──>  Worker  ── x-goog-api-key ──>  Gemini generateContent
+                                  <── validated JSON ──
+```
+
+Request:
+
+```json
+{ "sentence": "Yesterday I go to the store." }
+```
+
+Response (`200`):
+
+```json
+{
+  "model": "gemini-3.8-flash",
+  "feedback": {
+    "original": "...",
+    "corrected": "...",
+    "isCorrect": false,
+    "errorTypes": ["Past Simple"],
+    "explanationHe": "...",
+    "naturalAlternatives": { "everyday": "...", "neutral": "...", "formal": "..." },
+    "followUpExercise": { "instructionHe": "...", "question": "..." }
+  }
+}
+```
+
+### Why the same X-Sync-Key
+
+The frontend is public. Without auth, any visitor could read the URL out of the page
+source and spend the Gemini free-tier quota. `/ai/correct` therefore reuses
+`authenticate()` unchanged — no second credential and no second auth system. The
+resulting `owner_hash` is deliberately unused here, because this endpoint stores nothing.
+
+### Model and cost posture
+
+* Model: `gemini-3.8-flash` (override with a `GEMINI_MODEL` var if ever needed).
+* Plain `generateContent` text generation with `responseSchema` structured output.
+* **No** grounding, Google Search, Maps, URL context, code execution, or file tools —
+  nothing that would leave the free tier or require billing.
+* `temperature` 0.2 and a fixed schema, so feedback stays consistent between runs.
+* 20 s timeout via `AbortController`; the request is cancelled rather than left hanging.
+
+### Failure handling
+
+| Situation | Status | `error` |
+|---|---|---|
+| missing / short `X-Sync-Key` | 401 | `missing_sync_key`, `sync_key_too_short` |
+| empty, non-string or over-long `sentence` | 400 | `validation_failed` |
+| Gemini quota exhausted | 429 | `ai_rate_limited` |
+| Gemini model not found | 502 | `ai_model_unavailable` |
+| Gemini rejected the credentials | 502 | `ai_not_authorized` |
+| Gemini 5xx / unreadable body | 502 | `ai_upstream_error` |
+| model output not valid JSON or missing fields | 502 | `ai_bad_output` |
+| answer cut off | 502 | `ai_output_truncated` |
+| timeout / unreachable | 504 | `ai_timeout`, `ai_unreachable` |
+
+The upstream body is never forwarded. Only a curated message plus Google's short status
+code is returned, and every AI error object is passed through a redaction step that
+replaces any occurrence of `GEMINI_API_KEY` or `SYNC_PEPPER` before it is serialised.
+
+### Setting the key
+
+```bash
+npx wrangler secret put GEMINI_API_KEY --config=./wrangler.toml
+```
+
+Already done for this deployment. `GET /health` reports `"geminiConfigured": true` without
+revealing the value.
+
+---
+
+## Tests
+
+```bash
+npm test
+```
+
+Runs `node --test` over `worker/test/`. Gemini is stubbed with fake HTTP responses and D1
+with an in-memory double, so the suite needs no network, no Cloudflare login and no real
+key. It covers the sync CRUD behaviour, CORS, input validation, structured-output parsing,
+malformed model output, 429 / upstream failures, timeouts, and the assertion that no
+response ever contains the API key, the pepper or the sync key.
 
 ## Local development (optional)
 

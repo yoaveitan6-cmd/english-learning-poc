@@ -5,9 +5,10 @@
 # worker/wrangler.toml is gitignored on purpose: it holds account-linked
 # identifiers. This .example file is the version that lives in the public repo.
 #
-# NOTE: no secret belongs in this file. SYNC_PEPPER is set with
+# NOTE: no secret belongs in this file. Secrets are set with
 #   npx wrangler secret put SYNC_PEPPER
-# which stores it in Cloudflare, not in the repository.
+#   npx wrangler secret put GEMINI_API_KEY
+# which stores them in Cloudflare, not in the repository.
 
 name = "english-sync"
 main = "src/worker.js"

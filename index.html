@@ -205,6 +205,54 @@
     margin-top: 2px;
   }
   .vocab-empty { color: var(--muted); font-size: 14px; padding: 6px 0; }
+
+  /* ---- AI correction test (added for the Gemini POC) ---- */
+  #aiError {
+    font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    background: var(--fail-bg);
+    color: var(--fail-ink);
+    border: 1px solid #f3c9c9;
+    border-radius: 10px;
+    padding: 10px;
+    max-height: 240px;
+    overflow-y: auto;
+    margin: 0;
+  }
+  #aiError[hidden], #aiResult[hidden] { display: none; }
+  #aiSentence { min-height: 84px; }
+  .ai-block { padding: 10px 0; border-bottom: 1px solid var(--line); }
+  .ai-block:last-child { border-bottom: 0; }
+  .ai-label {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0 0 4px;
+  }
+  .ai-value { font-size: 15px; overflow-wrap: anywhere; margin: 0; }
+  .ai-value.big { font-size: 17px; font-weight: 600; }
+  .ai-he {
+    direction: rtl;
+    text-align: right;
+    font-size: 15px;
+    line-height: 1.6;
+    overflow-wrap: anywhere;
+    margin: 0;
+  }
+  .ai-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .ai-chips .chip { margin-left: 0; }
+  .ai-alt { display: flex; gap: 10px; align-items: baseline; padding: 5px 0; }
+  .ai-alt .k {
+    flex: 0 0 84px;
+    font-size: 12px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+  .ai-alt .v { flex: 1 1 auto; overflow-wrap: anywhere; }
 </style>
 </head>
 <body>
@@ -287,6 +335,30 @@
 
     <h2>Cloud vocabulary <span id="vocabCount" class="chip hide"></span></h2>
     <div id="vocabList"></div>
+  </div>
+
+  <div class="card stack" id="aiCard">
+    <h2>AI correction test (Gemini via the Worker)</h2>
+    <p class="note" style="margin-top:0">
+      Sends one English sentence to the same Cloudflare Worker, which asks Gemini for
+      structured feedback and returns it. The browser never talks to Google directly and
+      never holds an AI key. This section uses the Worker URL and private sync key from the
+      Cloud sync test above — nothing extra to configure. Nothing here is saved to D1.
+    </p>
+
+    <hr class="divider">
+
+    <div>
+      <label for="aiSentence">English sentence to check</label>
+      <textarea id="aiSentence" spellcheck="false" autocapitalize="sentences"
+                placeholder="Type one English sentence, then press Check my English."></textarea>
+    </div>
+
+    <button id="btnAiCheck" type="button">Check my English</button>
+
+    <p class="status" id="aiStatus">Idle. Nothing is sent until you press the button.</p>
+    <pre id="aiError" hidden>&mdash;</pre>
+    <div id="aiResult" hidden></div>
   </div>
 
   <div class="card">
@@ -1457,6 +1529,334 @@
     }
   } catch (e) {
     /* The speech tests above must keep working even if this section fails. */
+    try { window.console && window.console.error && window.console.error(e); } catch (e2) { /* ignore */ }
+  }
+})();
+</script>
+<script>
+/* ------------------------------------------------------------------
+   AI correction test — browser -> Cloudflare Worker -> Gemini.
+
+   A third, separate IIFE. It touches neither the speech tests nor the
+   sync code: it only READS the Worker URL and sync key that the sync
+   card already manages, so there is one place to configure and one
+   private key, never a second one.
+
+   The browser never sees a Gemini key. It calls POST /ai/correct on
+   the Worker with the same X-Sync-Key header the sync endpoints use,
+   and the Worker holds GEMINI_API_KEY as a Cloudflare secret.
+   ------------------------------------------------------------------ */
+(function () {
+  "use strict";
+
+  var LS_API = "elp.sync.apiBase";
+  var LS_KEY = "elp.sync.key";
+  var MIN_KEY_LEN = 20;
+  var MAX_SENTENCE_LEN = 300;   // must match MAX_SENTENCE_LEN in the Worker
+  var DEFAULT_API_BASE = "https://english-sync.yoaveitan-english.workers.dev";
+  var DEFAULT_SENTENCE = "Yesterday I go to the store.";
+
+  var sentenceEl, btn, statusEl, errorEl, resultEl;
+  var busy = false;
+
+  function byId(id) { return document.getElementById(id); }
+
+  function status(msg) {
+    if (statusEl) { statusEl.textContent = msg; }
+  }
+
+  function clearError() {
+    if (!errorEl) { return; }
+    errorEl.textContent = "—";
+    errorEl.hidden = true;
+  }
+
+  function showError(operation, lines) {
+    if (!errorEl) { return; }
+    errorEl.textContent = ["ERROR during: " + operation].concat(lines).join("\n");
+    errorEl.hidden = false;
+  }
+
+  function errText(e) {
+    try {
+      var name = (e && e.name) ? String(e.name) : "Error";
+      var msg = (e && e.message) ? String(e.message) : String(e);
+      return name + ": " + msg;
+    } catch (x) {
+      return "(unreadable error)";
+    }
+  }
+
+  function readStore(k) {
+    try { return window.localStorage.getItem(k) || ""; } catch (e) { return ""; }
+  }
+
+  function fieldValue(id) {
+    var el = byId(id);
+    return el ? String(el.value || "").trim() : "";
+  }
+
+  /* Read straight from the sync card when it is on the page, so a key that has
+     been typed but not yet saved still works. localStorage is the fallback. */
+  function config() {
+    var base = fieldValue("syncApi") || readStore(LS_API) || DEFAULT_API_BASE;
+    var key = fieldValue("syncKey") || readStore(LS_KEY);
+    return { base: String(base).replace(/\/+$/, ""), key: key };
+  }
+
+  function configProblem(cfg) {
+    if (!cfg.base) { return "Worker URL is empty. Fill it in the Cloud sync test above."; }
+    if (!/^https?:\/\//i.test(cfg.base)) { return "Worker URL must start with https://"; }
+    if (!cfg.key) { return "Sync key is empty. Set it in the Cloud sync test above (Generate, then Save)."; }
+    if (cfg.key.length < MIN_KEY_LEN) {
+      return "Sync key is only " + cfg.key.length + " characters. At least " + MIN_KEY_LEN + " are required.";
+    }
+    return null;
+  }
+
+  function setBusy(v) {
+    busy = v;
+    if (btn) {
+      btn.disabled = v;
+      btn.textContent = v ? "Checking…" : "Check my English";
+    }
+  }
+
+  /* ---------------- rendering ---------------- */
+
+  function el(tag, className, text) {
+    var node = document.createElement(tag);
+    if (className) { node.className = className; }
+    if (text !== undefined && text !== null) { node.textContent = String(text); }
+    return node;
+  }
+
+  function block(labelText) {
+    var b = el("div", "ai-block");
+    b.appendChild(el("p", "ai-label", labelText));
+    return b;
+  }
+
+  function clearResult() {
+    if (!resultEl) { return; }
+    resultEl.textContent = "";
+    resultEl.hidden = true;
+  }
+
+  /* Everything is written with textContent, never innerHTML: the model's output
+     is untrusted text and must never be able to inject markup into this page. */
+  function renderFeedback(fb, model) {
+    clearResult();
+    if (!resultEl) { return; }
+
+    var verdict = block("Verdict");
+    var chip = el("span", "chip " + (fb.isCorrect ? "pass" : "fail"),
+                  fb.isCorrect ? "Correct as written" : "Needs a fix");
+    var vrow = el("div", "ai-chips");
+    vrow.appendChild(chip);
+    verdict.appendChild(vrow);
+    resultEl.appendChild(verdict);
+
+    var orig = block("You wrote");
+    orig.appendChild(el("p", "ai-value", fb.original));
+    resultEl.appendChild(orig);
+
+    var corr = block("Corrected");
+    corr.appendChild(el("p", "ai-value big", fb.corrected));
+    resultEl.appendChild(corr);
+
+    if (fb.errorTypes && fb.errorTypes.length) {
+      var types = block("Error types");
+      var chips = el("div", "ai-chips");
+      for (var i = 0; i < fb.errorTypes.length; i++) {
+        chips.appendChild(el("span", "chip", fb.errorTypes[i]));
+      }
+      types.appendChild(chips);
+      resultEl.appendChild(types);
+    }
+
+    if (fb.explanationHe) {
+      var expl = block("Explanation (Hebrew)");
+      var p = el("p", "ai-he", fb.explanationHe);
+      p.setAttribute("dir", "rtl");
+      p.setAttribute("lang", "he");
+      expl.appendChild(p);
+      resultEl.appendChild(expl);
+    }
+
+    var alt = fb.naturalAlternatives || {};
+    if (alt.everyday || alt.neutral || alt.formal) {
+      var alts = block("Natural alternatives");
+      var pairs = [["Everyday", alt.everyday], ["Neutral", alt.neutral], ["Formal", alt.formal]];
+      for (var j = 0; j < pairs.length; j++) {
+        if (!pairs[j][1]) { continue; }
+        var row = el("div", "ai-alt");
+        row.appendChild(el("span", "k", pairs[j][0]));
+        row.appendChild(el("span", "v", pairs[j][1]));
+        alts.appendChild(row);
+      }
+      resultEl.appendChild(alts);
+    }
+
+    var ex = fb.followUpExercise || {};
+    if (ex.instructionHe || ex.question) {
+      var prac = block("Follow-up exercise");
+      if (ex.instructionHe) {
+        var ip = el("p", "ai-he", ex.instructionHe);
+        ip.setAttribute("dir", "rtl");
+        ip.setAttribute("lang", "he");
+        prac.appendChild(ip);
+      }
+      if (ex.question) {
+        prac.appendChild(el("p", "ai-value", ex.question));
+      }
+      resultEl.appendChild(prac);
+    }
+
+    if (model) {
+      var meta = el("p", "note", "Model: " + model + " — answered through the Worker. Not saved to D1.");
+      resultEl.appendChild(meta);
+    }
+
+    resultEl.hidden = false;
+  }
+
+  /* ---------------- request ---------------- */
+
+  function check() {
+    if (busy) { return; }
+
+    var cfg = config();
+    var problem = configProblem(cfg);
+    if (problem) {
+      clearResult();
+      showError("checking a sentence", ["Configuration problem: " + problem]);
+      status("Not configured.");
+      return;
+    }
+
+    var sentence = String(sentenceEl.value || "").trim().replace(/\s+/g, " ");
+    if (!sentence) {
+      clearResult();
+      showError("checking a sentence", ["Type an English sentence first."]);
+      status("Nothing to check.");
+      return;
+    }
+    if (sentence.length > MAX_SENTENCE_LEN) {
+      clearResult();
+      showError("checking a sentence", [
+        "The sentence is " + sentence.length + " characters.",
+        "This POC accepts at most " + MAX_SENTENCE_LEN + ". Try one sentence."
+      ]);
+      status("Sentence too long.");
+      return;
+    }
+
+    var url = cfg.base + "/ai/correct";
+    var started = Date.now();
+    clearError();
+    clearResult();
+    setBusy(true);
+    status("Asking the Worker… this usually takes a few seconds.");
+
+    fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Sync-Key": cfg.key },
+      body: JSON.stringify({ sentence: sentence }),
+      mode: "cors",
+      cache: "no-store",
+      credentials: "omit"
+    }).then(function (res) {
+      return res.text().then(function (text) {
+        var elapsed = Date.now() - started;
+        var parsed = null;
+        try { parsed = JSON.parse(text); } catch (e) { parsed = null; }
+
+        if (!res.ok) {
+          var hint = "";
+          if (res.status === 401) {
+            hint = "The Worker refused the sync key. Check the key in the Cloud sync test above.";
+          } else if (res.status === 429) {
+            hint = "The Gemini free-tier quota is exhausted for now. Wait a minute and try again.";
+          } else if (res.status === 504) {
+            hint = "The AI request timed out. Try again.";
+          }
+          showError("POST /ai/correct", [
+            "POST " + url,
+            "HTTP status: " + res.status + " " + (res.statusText || ""),
+            "Round trip: " + elapsed + " ms",
+            hint ? "" : null,
+            hint || null,
+            "",
+            "Response body:",
+            text || "(empty body)"
+          ].filter(function (l) { return l !== null; }));
+          status("Failed with HTTP " + res.status + ".");
+          return;
+        }
+
+        if (!parsed || !parsed.feedback) {
+          showError("POST /ai/correct", [
+            "POST " + url,
+            "HTTP status: " + res.status,
+            "The response did not contain a feedback object. Raw body:",
+            text || "(empty body)"
+          ]);
+          status("Unexpected response shape.");
+          return;
+        }
+
+        renderFeedback(parsed.feedback, parsed.model);
+        status("Answered in " + elapsed + " ms.");
+      });
+    }, function (networkErr) {
+      showError("POST /ai/correct", [
+        "POST " + url,
+        "The request never completed — no HTTP status was received.",
+        errText(networkErr),
+        "",
+        "Most likely one of:",
+        "  1. The Worker URL is wrong or the Worker is not deployed.",
+        "  2. This page's origin (" + window.location.origin + ") is not in",
+        "     ALLOWED_ORIGINS on the Worker, so the CORS preflight was blocked.",
+        "  3. This device is offline."
+      ]);
+      status("Network or CORS failure.");
+    })["then"](function () { setBusy(false); }, function (e) {
+      setBusy(false);
+      showError("checking a sentence", [errText(e)]);
+    });
+  }
+
+  /* ---------------- init ---------------- */
+
+  function init() {
+    sentenceEl = byId("aiSentence");
+    btn = byId("btnAiCheck");
+    statusEl = byId("aiStatus");
+    errorEl = byId("aiError");
+    resultEl = byId("aiResult");
+
+    if (!sentenceEl || !btn) { return; }
+
+    clearError();
+    clearResult();
+
+    // Pre-filled for convenience only. Nothing is sent until the button is pressed.
+    if (!sentenceEl.value) { sentenceEl.value = DEFAULT_SENTENCE; }
+
+    btn.addEventListener("click", check);
+    status("Ready. Press “Check my English” to send this sentence to the Worker.");
+  }
+
+  try {
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", init);
+    } else {
+      init();
+    }
+  } catch (e) {
+    /* The speech tests and the sync card must keep working if this section fails. */
     try { window.console && window.console.error && window.console.error(e); } catch (e2) { /* ignore */ }
   }
 })();

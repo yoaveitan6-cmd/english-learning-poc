@@ -1,5 +1,11 @@
 {
   "devDependencies": {
     "wrangler": "^4.129.0"
+  },
+  "name": "english-learning-poc",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test \"worker/test/**/*.test.js\""
   }
 }
