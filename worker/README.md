@@ -1,15 +1,19 @@
 # Backend — Cloudflare Workers + D1
 
-Three stages live in this one Worker:
+Four stages live in this one Worker:
 
 1. **Sync POC** — cross-device vocabulary storage (`/vocabulary`).
 2. **AI correction POC** — one sentence to Gemini, structured feedback back (`/ai/correct`).
 3. **Learning engine** — the learner profile, recurring-mistake tracking and
    Today's Plan (`/learner`, `/daily-plan`, `/learning-targets`).
+4. **Vocabulary** — the first real learning activity (`/vocab/...`): the word
+   library, the daily session, spaced repetition, and the approval queue for
+   words other modules will suggest.
 
 Stage 3 makes **no AI calls at all**. Application logic decides *what* the
-learner should practise; Gemini's later job is to generate *content* for the
-objectives that logic already chose.
+learner should practise; Gemini's job, in stage 4, is to generate *content* for
+the objectives that logic already chose — and nothing else. Review timing,
+exercise choice and session composition are all ordinary code.
 
 Everything below fits inside Cloudflare's **free plan**. No credit card is required.
 
@@ -24,6 +28,9 @@ Everything below fits inside Cloudflare's **free plan**. No credit card is requi
 | `wrangler.toml.example` | yes | Template with placeholders. |
 | `migrations/*.sql` | yes | Additive table definitions only. |
 | `src/planner.js` | yes | Pure planning logic, no I/O and no secrets. |
+| `src/vocabulary.js` | yes | Pure vocabulary logic — scheduling, exercises, marking. No I/O. |
+| `src/vocab_routes.js` | yes | Vocabulary routes and prompts. Reads the API key from env, never stores it. |
+| `src/gemini.js` | yes | Shared Gemini transport. No key, only the code that sends one. |
 | `wrangler.toml` | **no — gitignored** | Holds your D1 `database_id`. |
 | your Cloudflare account ID | **no — never in a tracked file** | Passed as `CLOUDFLARE_ACCOUNT_ID` at the command line. |
 | `SYNC_PEPPER` | **no — never on disk** | Stored as a Cloudflare Worker secret. |
@@ -138,6 +145,19 @@ The Worker computes `owner_hash = HMAC-SHA256(SYNC_PEPPER, syncKey)` and stores 
 | `POST` | `/learning-targets/evidence` | `{ errors?: [], successes?: [], date? }` | `{ targets }` |
 | `GET` | `/learning-config` | — | the planner's own rules, read-only |
 | `GET` | `/ai/usage` | — | `{ usage, totalCalls }` internal accounting |
+| `GET` | `/vocab/config` | — | practice modes and the review rules, read-only |
+| `GET` | `/vocab/library` | — | `{ items, pending, dismissed, stats }` — every word with source, mastery and due date |
+| `POST` | `/vocab/items` | `{ term, hebrew?, example?, enrich? }` | `{ item, enriched, aiNote }` — manual add, enriched by one AI call when no meaning is given |
+| `POST` | `/vocab/items/:id` | `{ term?, hebrew, example?, ... }` | `{ item }` — edit content; mastery and scheduling untouched |
+| `POST` | `/vocab/enrich` | `{ term }` | `{ enrichment }` — look a term up without saving it |
+| `GET` | `/vocab/suggestions` | — | `{ pending, dismissed }` |
+| `POST` | `/vocab/suggestions` | `{ term, hebrew?, origin?, contextNote? }` | `{ suggestion, created }` — always **pending**; the internal API for future Speaking/Writing slices |
+| `POST` | `/vocab/suggestions/:id/approve` | — | `{ item, approval: "approved" }` |
+| `POST` | `/vocab/suggestions/:id/reject` | — | `{ item, approval: "rejected" }` |
+| `GET` | `/vocab/session` | `?date=&tz=&mode=` | `{ date, session, exists }` — read only, never creates |
+| `POST` | `/vocab/session` | `{ practiceMode?, date?, timezoneOffsetMinutes? }` | `{ session, created, reason, aiCalls }` — idempotent per day and mode |
+| `POST` | `/vocab/session/answer` | `{ exerciseId, answer, practiceMode? }` | `{ correct, feedback, evaluatedBy, session }` |
+| `POST` | `/vocab/session/complete` | `{ practiceMode?, durationSeconds? }` | `{ summary, plan, session }` — 409 until the session is genuinely finished |
 
 Every route above uses the same `X-Sync-Key` header. There is no second auth
 system, and no route accepts an `owner_hash` from the client.
@@ -420,6 +440,15 @@ accounting can never break the feature it measures.
 migration files themselves, so a destructive migration fails CI rather than
 production.
 
+Migration 0003 adds four tables and touches none of the existing ones. The three
+vocabulary sources and the approval flow needed **no** new schema at all: they
+are the `source` and `approval` columns migration 0002 already added to
+`vocabulary_state`, and `planner.js` has refused to schedule anything `pending`
+or `rejected` since before the Vocabulary slice existed. The new tables carry
+only what genuinely had nowhere to live — richer teaching detail per word
+(`vocabulary_detail`), the day's materialised session (`vocab_session`), its
+exercises (`vocab_exercise`) and the learner's answers (`vocab_attempt`).
+
 Migration 0002 adds seven tables and touches none of the existing ones. Note in
 particular that per-word learning state lives in a **separate**
 `vocabulary_state` table joined on `(owner_hash, id)`, rather than adding columns
@@ -463,6 +492,20 @@ completion carried across every session-mode transition (including a round trip
 through a mode that excludes the activity), date-boundary behaviour, migration
 additivity, and the assertions that planning makes zero network calls and that
 no response ever contains the API key, the pepper or the sync key.
+
+For Vocabulary specifically: the review schedule's response to success, failure,
+repeated failure, mastery and regression; deterministic session composition
+(same state, same day, same questions on both devices); Smart Mix producing more
+than one exercise type while focused modes produce exactly one; answer checking
+accepting articles and typos-as-near-misses but not different words; the day's
+new words being generated in **one** batch and never regenerated on reload or on
+a second device; generated words being de-duplicated against the library even
+when the model ignores the instruction; every AI failure mode (429, 503 retry,
+malformed output, blocked prompt) degrading the session rather than breaking it;
+the correct answer never appearing in a response before the question is
+answered; completion being refused until the session is actually done; and a
+finished session closing the Today's Plan activity durably across refreshes,
+devices and Quick/Standard/Full changes.
 
 ## Local development (optional)
 

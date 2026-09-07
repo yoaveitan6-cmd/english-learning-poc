@@ -690,8 +690,10 @@ async function loadRecentSessions(env, ownerHash) {
 
 /* ---------------- daily plan ---------------- */
 
-/** Validates an explicit date, or derives one from a timezone offset. */
-function resolveDateKey(rawDate, rawOffset, now) {
+/** Validates an explicit date, or derives one from a timezone offset.
+    Exported so the vocabulary routes resolve "today" by exactly the same rule
+    the plan does — two answers to "which day is it" would be one too many. */
+export function resolveDateKey(rawDate, rawOffset, now) {
   let offset = 0;
   if (rawOffset !== undefined && rawOffset !== null && rawOffset !== "") {
     const n = typeof rawOffset === "number" ? rawOffset : parseInt(rawOffset, 10);
@@ -1128,45 +1130,19 @@ async function completeActivity(request, env, cors, ownerHash, activityId) {
   if (evErrors.error) return json(evErrors.error, 400, cors);
   if (evSuccesses.error) return json(evSuccesses.error, 400, cors);
 
-  await env.DB.prepare(
-    "UPDATE daily_plan_activity SET status = ?, completedAt = ?, updatedAt = ? " +
-    "WHERE owner_hash = ? AND plan_date = ? AND activity_id = ?"
-  ).bind(status, status === "complete" ? now : null, now, ownerHash, dateKey, activityId).run();
-
-  // The plan row's updatedAt moves; nothing else about the plan is rebuilt.
-  await env.DB.prepare(
-    "UPDATE daily_plan SET updatedAt = ? WHERE owner_hash = ? AND plan_date = ?"
-  ).bind(now, ownerHash, dateKey).run();
+  await applyActivityStatus(env, ownerHash, dateKey, activityId, status, now);
 
   let touchedTargets = [];
   if (status === "complete") {
-    const sessionId = dateKey + ":" + activityId;
-    await env.DB.prepare(
-      "INSERT INTO session_summary (owner_hash, session_id, plan_date, activity_id, activity_type, " +
-      "  objectives, itemsAttempted, itemsCorrect, accuracy, durationSeconds, errorEvidence, " +
-      "  strengthEvidence, summary, createdAt) " +
-      "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) " +
-      "ON CONFLICT(owner_hash, session_id) DO UPDATE SET " +
-      "  itemsAttempted = excluded.itemsAttempted, itemsCorrect = excluded.itemsCorrect, " +
-      "  accuracy = excluded.accuracy, durationSeconds = excluded.durationSeconds, " +
-      "  errorEvidence = excluded.errorEvidence, strengthEvidence = excluded.strengthEvidence, " +
-      "  summary = excluded.summary, createdAt = excluded.createdAt"
-    ).bind(
-      ownerHash,
-      sessionId,
-      dateKey,
-      activityId,
-      row.type,
-      row.objectives || "[]",
-      attempted,
-      correct,
-      attempted > 0 ? Math.round((correct / attempted) * 100) : 0,
-      duration,
-      JSON.stringify(evErrors.ids),
-      JSON.stringify(evSuccesses.ids),
-      summaryText,
-      now
-    ).run();
+    await writeSessionSummary(env, ownerHash, dateKey, activityId, row, {
+      itemsAttempted: attempted,
+      itemsCorrect: correct,
+      durationSeconds: duration,
+      summary: summaryText,
+      errors: evErrors.ids,
+      successes: evSuccesses.ids,
+      now: now
+    });
 
     if (evErrors.ids.length || evSuccesses.ids.length) {
       touchedTargets = await applyEvidenceToTargets(env, ownerHash, {
@@ -1195,6 +1171,88 @@ async function completeActivity(request, env, cors, ownerHash, activityId) {
     200,
     cors
   );
+}
+
+/* Sets one activity's status and touches the plan row. Nothing else about the
+   plan is rebuilt — the other, unfinished activities are not re-scored. */
+async function applyActivityStatus(env, ownerHash, dateKey, activityId, status, now) {
+  await env.DB.prepare(
+    "UPDATE daily_plan_activity SET status = ?, completedAt = ?, updatedAt = ? " +
+    "WHERE owner_hash = ? AND plan_date = ? AND activity_id = ?"
+  ).bind(status, status === "complete" ? now : null, now, ownerHash, dateKey, activityId).run();
+
+  await env.DB.prepare(
+    "UPDATE daily_plan SET updatedAt = ? WHERE owner_hash = ? AND plan_date = ?"
+  ).bind(now, ownerHash, dateKey).run();
+}
+
+/* Writes the day's completion ledger entry. This row, not the plan's status
+   column, is what survives a replan — see loadDayCompletions. */
+async function writeSessionSummary(env, ownerHash, dateKey, activityId, row, stats) {
+  const attempted = Math.max(0, Number(stats.itemsAttempted) || 0);
+  const correct = Math.max(0, Number(stats.itemsCorrect) || 0);
+  await env.DB.prepare(
+    "INSERT INTO session_summary (owner_hash, session_id, plan_date, activity_id, activity_type, " +
+    "  objectives, itemsAttempted, itemsCorrect, accuracy, durationSeconds, errorEvidence, " +
+    "  strengthEvidence, summary, createdAt) " +
+    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) " +
+    "ON CONFLICT(owner_hash, session_id) DO UPDATE SET " +
+    "  itemsAttempted = excluded.itemsAttempted, itemsCorrect = excluded.itemsCorrect, " +
+    "  accuracy = excluded.accuracy, durationSeconds = excluded.durationSeconds, " +
+    "  errorEvidence = excluded.errorEvidence, strengthEvidence = excluded.strengthEvidence, " +
+    "  summary = excluded.summary, createdAt = excluded.createdAt"
+  ).bind(
+    ownerHash,
+    dateKey + ":" + activityId,
+    dateKey,
+    activityId,
+    row.type,
+    row.objectives || "[]",
+    attempted,
+    correct,
+    attempted > 0 ? Math.round((correct / attempted) * 100) : 0,
+    Math.max(0, Number(stats.durationSeconds) || 0),
+    JSON.stringify(stats.errors || []),
+    JSON.stringify(stats.successes || []),
+    String(stats.summary || "").slice(0, MAX_SUMMARY_LEN),
+    stats.now
+  ).run();
+}
+
+/**
+ * Marks one activity complete on behalf of a module that has already done the
+ * learning work and applied its own evidence — today, the vocabulary session.
+ *
+ * It goes through exactly the same two writes as POST
+ * /daily-plan/activity/:id/complete, so a Vocabulary activity finished from the
+ * Vocabulary view is indistinguishable, in the database, from one finished any
+ * other way. In particular it writes the same session_summary ledger row, which
+ * is what makes the completion survive a replan or a session-mode change.
+ *
+ * It deliberately does NOT touch vocabulary_state: the caller owns the
+ * scheduler for its own items and running it twice would double-count.
+ *
+ * Returns the stored plan, so the caller can hand the browser fresh state.
+ */
+export async function writeActivityCompletion(env, ownerHash, dateKey, activityId, stats) {
+  const row = await env.DB.prepare(
+    "SELECT * FROM daily_plan_activity WHERE owner_hash = ? AND plan_date = ? AND activity_id = ?"
+  ).bind(ownerHash, dateKey, activityId).first();
+  if (!row) return null;
+
+  const now = Number(stats.now) || Date.now();
+  await applyActivityStatus(env, ownerHash, dateKey, activityId, "complete", now);
+  await writeSessionSummary(env, ownerHash, dateKey, activityId, row, {
+    itemsAttempted: stats.itemsAttempted,
+    itemsCorrect: stats.itemsCorrect,
+    durationSeconds: stats.durationSeconds,
+    summary: stats.summary,
+    errors: [],
+    successes: [],
+    now: now
+  });
+
+  return readStoredPlan(env, ownerHash, dateKey);
 }
 
 /**

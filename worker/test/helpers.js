@@ -183,3 +183,72 @@ export function jsonResponse(status, obj) {
     headers: { "Content-Type": "application/json" }
   });
 }
+
+/* ---------------- vocabulary MVP fixtures ---------------- */
+
+/** One well-formed generated word, in the shape the generation schema asks for. */
+export function generatedWord(n) {
+  return {
+    term: "phrase-" + n,
+    hebrewMeaning: "פירוש-" + n,
+    partOfSpeech: "phrasal verb",
+    shortDefinitionEn: "To do the thing numbered " + n + " in a natural way.",
+    exampleSentence: "I had to phrase-" + n + " the whole report before Friday.",
+    register: "neutral",
+    usefulnessNoteHe: "ביטוי שימושי בשיחה יומיומית.",
+    topic: "work_career"
+  };
+}
+
+export function generationBatch(count) {
+  const items = [];
+  for (let i = 1; i <= count; i++) items.push(generatedWord(i));
+  return { items };
+}
+
+/** One well-formed meaning-in-context question per requested term. */
+export function contextBatch(terms) {
+  return {
+    items: terms.map((t, i) => ({
+      term: t,
+      sentence: "In this sentence you can tell what " + t + " means from context " + i + ".",
+      correctMeaning: "המשמעות הנכונה " + i,
+      wrongMeanings: ["מסיח א" + i, "מסיח ב" + i, "מסיח ג" + i]
+    }))
+  };
+}
+
+export const SAMPLE_WRITE_EVAL = {
+  usedCorrectly: true,
+  isNatural: true,
+  correctedSentence: "I finally figured out the problem.",
+  explanationHe: "השימוש נכון וטבעי.",
+  betterAlternative: ""
+};
+
+/**
+ * Routes a stubbed Gemini call to a handler chosen by what the prompt asks for,
+ * so one stub can serve a whole session flow. Returns the stub handle plus a
+ * per-purpose call count, which is how the tests assert that batching actually
+ * batched.
+ */
+export function stubGeminiByPurpose(handlers) {
+  const counts = { generation: 0, context: 0, enrichment: 0, writeEval: 0, unknown: 0 };
+  const stub = stubFetch(async (url, init) => {
+    const payload = JSON.parse(init.body);
+    const system = payload.systemInstruction.parts[0].text;
+    const user = payload.contents[0].parts[0].text;
+
+    let purpose = "unknown";
+    if (/meaning-in-context questions/.test(system)) purpose = "context";
+    else if (/judge ONE sentence/.test(system)) purpose = "writeEval";
+    else if (/Term the learner wants to save/.test(user)) purpose = "enrichment";
+    else if (/choose new English vocabulary/.test(system)) purpose = "generation";
+
+    counts[purpose] = (counts[purpose] || 0) + 1;
+    const handler = handlers[purpose];
+    if (!handler) throw new Error("no stub handler for Gemini purpose: " + purpose);
+    return handler(payload, user);
+  });
+  return { stub, counts, restore: () => stub.restore(), calls: stub.calls };
+}

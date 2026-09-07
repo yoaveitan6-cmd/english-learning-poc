@@ -319,6 +319,145 @@
   }
   #todayError[hidden], #todayPlan[hidden], #todayCarried[hidden] { display: none; }
   #todayCarried { color: var(--pass-ink); }
+
+  /* ---- Vocabulary (the first real learning activity) ---- */
+  #vocabCard { border-color: #c9d8f4; }
+  .vocab-tabs { display: flex; gap: 6px; }
+  .vocab-tabs button { flex: 1 1 0; padding: 8px 6px; font-size: 13px; min-height: 40px; }
+  .vocab-tabs button[aria-pressed="true"] {
+    background: var(--accent);
+    color: var(--accent-ink);
+    border-color: var(--accent);
+  }
+  #vocabError {
+    font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    background: var(--fail-bg);
+    color: var(--fail-ink);
+    border: 1px solid #f3c9c9;
+    border-radius: 10px;
+    padding: 10px;
+    max-height: 200px;
+    overflow-y: auto;
+    margin: 0;
+  }
+  #vocabError[hidden], #vocabSessionPane[hidden], #vocabLibraryPane[hidden],
+  #vocabRunning[hidden], #vocabIntro[hidden], #vocabSummary[hidden],
+  #vocabFeedback[hidden], #btnVocabNext[hidden], #btnVocabFinish[hidden],
+  #vocabAiNote[hidden], #vocabPending[hidden], #vocabAddExtra[hidden] { display: none; }
+
+  .vocab-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 14px;
+    font-size: 13px;
+    color: var(--muted);
+    margin: 8px 0 0;
+  }
+  .vocab-bar {
+    height: 6px;
+    background: var(--unknown-bg);
+    border-radius: 999px;
+    overflow: hidden;
+    margin: 10px 0 2px;
+  }
+  .vocab-bar span { display: block; height: 100%; background: var(--accent); width: 0; transition: width .2s; }
+
+  .ex-kind {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0 0 6px;
+  }
+  .ex-instruction { direction: rtl; text-align: right; font-size: 14px; color: var(--muted); margin: 0 0 8px; }
+  .ex-question {
+    font-size: 22px;
+    font-weight: 650;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+    margin: 0 0 4px;
+  }
+  .ex-question.he { direction: rtl; text-align: right; }
+  .ex-hint { font-size: 14px; color: var(--muted); direction: rtl; text-align: right; margin: 0 0 8px; }
+  .ex-options { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+  .ex-options button {
+    justify-content: flex-start;
+    text-align: right;
+    direction: rtl;
+    background: var(--card);
+    color: var(--ink);
+    border-color: var(--line);
+    font-weight: 500;
+    min-height: 48px;
+  }
+  .ex-options button[aria-pressed="true"] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+  .ex-text { margin-top: 12px; }
+
+  .fb { border-radius: 10px; padding: 10px 12px; margin-top: 12px; border: 1px solid var(--line); }
+  .fb.ok { background: var(--pass-bg); border-color: #bfe3c9; }
+  .fb.no { background: var(--fail-bg); border-color: #f3c9c9; }
+  .fb .fb-head { font-weight: 700; font-size: 15px; direction: rtl; text-align: right; }
+  .fb .fb-he { direction: rtl; text-align: right; font-size: 14px; line-height: 1.6; margin-top: 4px; }
+  .fb .fb-en { font-size: 14px; margin-top: 6px; overflow-wrap: anywhere; }
+  .fb .fb-label {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  .vocab-sum-group { padding: 8px 0; border-bottom: 1px solid var(--line); }
+  .vocab-sum-group:last-child { border-bottom: 0; }
+  .vocab-sum-group h3 { font-size: 13px; margin: 0 0 4px; font-weight: 650; }
+  .vocab-sum-group ul { margin: 0; padding-left: 18px; font-size: 14px; }
+
+  .vocab-row {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    justify-content: space-between;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .vocab-row:last-child { border-bottom: 0; }
+  .vocab-row .main { min-width: 0; flex: 1 1 auto; }
+  .vocab-row .en { font-weight: 600; overflow-wrap: anywhere; }
+  .vocab-row .he { font-size: 15px; direction: rtl; text-align: right; overflow-wrap: anywhere; }
+  .vocab-row .sub { font-size: 12px; color: var(--muted); margin-top: 3px; overflow-wrap: anywhere; }
+  .vocab-row .acts { flex: 0 0 auto; display: flex; flex-direction: column; gap: 6px; align-items: flex-end; }
+  .vocab-row .acts button { color: var(--ink); }
+  .vocab-row .acts button.reject { color: var(--fail-ink); }
+  .chip.m-new { background: var(--unknown-bg); color: var(--unknown-ink); }
+  .chip.m-learning { background: #fdf2dd; color: #8a5a00; }
+  .chip.m-familiar { background: #e6eefc; color: #1f4a9b; }
+  .chip.m-strong { background: #e0f0e6; color: #1c6b35; }
+  .chip.m-mastered { background: #d7ecdd; color: #14532a; }
+  .vocab-filters { display: flex; gap: 8px; align-items: center; }
+  .vocab-filters input { flex: 1 1 auto; }
+  .vocab-focus { display: flex; gap: 8px; align-items: stretch; }
+  .vocab-focus select {
+    font: inherit;
+    flex: 1 1 auto;
+    padding: 10px 12px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: #fff;
+    color: var(--ink);
+  }
+  .vocab-focus button { width: auto; flex: 0 0 auto; min-height: 44px; padding: 8px 16px; }
+  .vocab-note-ok {
+    font-size: 13px;
+    color: #8a5a00;
+    background: #fdf2dd;
+    border: 1px solid #f0dcae;
+    border-radius: 10px;
+    padding: 8px 10px;
+    margin: 0;
+  }
 </style>
 </head>
 <body>
@@ -376,6 +515,114 @@
         Your profile is still provisional — no initial assessment has been taken yet, so the plan
         starts from neutral estimates rather than a measured level.
       </p>
+    </div>
+  </div>
+
+  <!-- ================= Vocabulary =================
+       The first real learning activity. Opened from Today's Plan, or used on
+       its own from the "My words" tab.
+
+       Two panes, one card:
+         Session   the lesson the planner asked for — review items, the day's
+                   new words, one question at a time, and a completion rule the
+                   learner can see. Finishing it is what marks the Today's Plan
+                   Vocabulary activity done; there is no "mark done" shortcut.
+         My words  the library: every word with its source and mastery, manual
+                   entry, and the approval queue for words other modules will
+                   suggest in a later slice.
+
+       Like every other section it is its own IIFE reading the Worker URL and
+       sync key from the Cloud sync card, so there is one identity in play and a
+       failure here cannot take down the speech tests.
+       ============================================== -->
+  <div class="card stack" id="vocabCard">
+    <div class="today-head">
+      <h2>Vocabulary</h2>
+      <span id="vocabProgressChip" class="chip">&mdash;</span>
+    </div>
+
+    <div class="vocab-tabs" role="group" aria-label="Vocabulary view">
+      <button type="button" class="secondary" id="btnTabSession" aria-pressed="true">Today&rsquo;s session</button>
+      <button type="button" class="secondary" id="btnTabLibrary" aria-pressed="false">My words</button>
+    </div>
+
+    <p class="status" id="vocabStatus">Idle. Save your Worker URL and sync key below first.</p>
+    <pre id="vocabError" hidden>&mdash;</pre>
+
+    <!-- ---------- session pane ---------- -->
+    <div id="vocabSessionPane">
+      <div id="vocabIntro">
+        <p class="note" style="margin-top:0">
+          Your session comes from Today&rsquo;s Plan: the words that are due, plus the number of new
+          words the planner decided on. It is created once a day and is the same on every device.
+        </p>
+        <button id="btnVocabStart" type="button">Start today&rsquo;s vocabulary</button>
+      </div>
+
+      <div id="vocabRunning" hidden>
+        <p class="vocab-meta" id="vocabMeta"></p>
+        <p class="vocab-note-ok" id="vocabAiNote" hidden>&mdash;</p>
+        <div class="vocab-bar"><span id="vocabBar"></span></div>
+        <div id="vocabExercise"></div>
+        <div id="vocabFeedback" hidden></div>
+        <button id="btnVocabNext" type="button" hidden>Next</button>
+        <button id="btnVocabFinish" type="button" hidden>Finish session</button>
+        <p class="note" id="vocabRule"></p>
+      </div>
+
+      <div id="vocabSummary" hidden></div>
+    </div>
+
+    <!-- ---------- library pane ---------- -->
+    <div id="vocabLibraryPane" class="stack" hidden>
+      <div>
+        <label for="vocabAddTerm">Add a word or phrase &mdash; type the English and the rest is filled in for you</label>
+        <input id="vocabAddTerm" type="text" autocapitalize="none" autocorrect="off"
+               spellcheck="false" placeholder="figure out">
+      </div>
+      <div id="vocabAddExtra" hidden>
+        <label for="vocabAddHebrew">Hebrew meaning</label>
+        <input id="vocabAddHebrew" type="text" dir="auto" autocapitalize="none" autocorrect="off"
+               spellcheck="false" placeholder="להבין / לפענח">
+      </div>
+      <button id="btnVocabAdd" type="button">Add to my vocabulary</button>
+
+      <hr class="divider">
+
+      <div id="vocabPending" hidden>
+        <h2>Suggested for you <span id="vocabPendingCount" class="chip"></span></h2>
+        <p class="note" style="margin-top:0">
+          Words noticed while you were working. Nothing here is being taught yet &mdash; it joins your
+          daily learning only when you add it.
+        </p>
+        <div id="vocabPendingList"></div>
+        <hr class="divider">
+      </div>
+
+      <div class="vocab-focus">
+        <label class="sr-only" for="vocabFocusMode" hidden>Practice type</label>
+        <select id="vocabFocusMode" aria-label="Practice type">
+          <option value="smart_mix">Smart Mix</option>
+          <option value="en_he">English &rarr; Hebrew</option>
+          <option value="he_en">Hebrew &rarr; English</option>
+          <option value="fill_blank">Fill in the blank</option>
+          <option value="write_sentence">Write your own sentence</option>
+        </select>
+        <button id="btnVocabPractice" type="button">Practise</button>
+      </div>
+      <p class="note" style="margin-top:0">
+        Smart Mix is today&rsquo;s planned session. The other options practise words you already have,
+        in one chosen form, without introducing new ones.
+      </p>
+
+      <hr class="divider">
+
+      <div class="vocab-filters">
+        <input id="vocabSearch" type="text" autocapitalize="none" autocorrect="off"
+               spellcheck="false" placeholder="Search your words">
+      </div>
+      <p class="vocab-meta" id="vocabLibStats"></p>
+      <div id="vocabList"></div>
     </div>
   </div>
 
@@ -2129,8 +2376,8 @@
       var rev = (spec.reviewItemIds || []).length;
       var neu = (spec.newItemIds || []).length;
       if (rev) { parts.push(rev + " to review"); }
-      if (neu) { parts.push(neu + " saved words to learn"); }
-      if (spec.newWordsToSource) { parts.push(spec.newWordsToSource + " new words to be generated later"); }
+      if (neu) { parts.push(neu + " of your words to introduce"); }
+      if (spec.newWordsToSource) { parts.push(spec.newWordsToSource + " new words chosen for you"); }
       if (spec.dueTotal) { parts.push(spec.dueTotal + " due in total"); }
     } else if (a.type === "reading") {
       if (spec.difficulty) { parts.push(spec.difficulty); }
@@ -2245,7 +2492,22 @@
           skipped.className = "chip";
           skipped.textContent = "skipped";
           act.appendChild(skipped);
+        } else if (a.type === "vocabulary") {
+          /* Vocabulary has a real experience now, so it does not get a
+             "mark done" button. The only way to complete it is to work
+             through the session, which is what the Vocabulary card owns. */
+          var open = document.createElement("button");
+          open.type = "button";
+          open.className = "mini";
+          open.textContent = "Start";
+          open.addEventListener("click", function () {
+            document.dispatchEvent(new CustomEvent("english:open-vocabulary"));
+          });
+          act.appendChild(open);
         } else {
+          /* The other activities have no experience built yet, so marking
+             them done by hand is still the honest option. Each will lose its
+             button the same way Vocabulary just did. */
           var btn = document.createElement("button");
           btn.type = "button";
           btn.className = "mini";
@@ -2356,6 +2618,16 @@
     btnLoad.addEventListener("click", function () { loadOrCreate(false); });
     btnReplan.addEventListener("click", function () { loadOrCreate(true); });
 
+    /* The Vocabulary card completes its own activity, and hands back the
+       plan it got from the Worker so this view agrees immediately rather
+       than waiting for the next refresh. */
+    document.addEventListener("english:plan-updated", function (e) {
+      if (e && e.detail && e.detail.plan) {
+        render(e.detail.plan);
+        status("Vocabulary finished. Saved to the cloud — it stays complete on every device.");
+      }
+    });
+
     clearError();
     setMode("standard");
 
@@ -2391,5 +2663,836 @@
   }
 })();
 </script>
+<script>
+/* ------------------------------------------------------------------
+   Vocabulary — the first real learning activity.
+
+   Its own IIFE, like every other section, so a failure here cannot take
+   down the microphone, speech, sync, AI or Today's Plan cards.
+
+   It reads the Worker URL and sync key straight out of the Cloud sync
+   card's inputs, exactly as Today's Plan does: one place to configure,
+   one identity, no chance of the two drifting apart.
+
+   No learning state is cached in this browser. Every question, every
+   answer and every word comes from D1 on each request, which is what
+   makes "the Mac and the iPhone show the same lesson" and "a refresh
+   mid-session loses nothing" observable rather than merely intended.
+
+   It talks to Today's Plan through two DOM events and nothing else:
+     english:open-vocabulary   the plan asks this card to take over
+     english:plan-updated      this card tells the plan it has changed
+   ------------------------------------------------------------------ */
+(function () {
+  "use strict";
+
+  var MIN_KEY_LEN = 20;
+
+  var MASTERY_LABEL = {
+    "new": "New",
+    learning: "Learning",
+    familiar: "Familiar",
+    strong: "Strong",
+    mastered: "Mastered"
+  };
+  var SOURCE_LABEL = { manual: "Added by you", system: "Chosen for you", detected: "Noticed in your work" };
+  var KIND_LABEL = {
+    en_he: "English → Hebrew",
+    he_en: "Hebrew → English",
+    fill_blank: "Fill in the blank",
+    meaning_context: "Meaning in context",
+    write_sentence: "Write your own sentence"
+  };
+
+  var el = {};
+  var busy = false;
+  var tab = "session";
+  var session = null;        // the session currently on screen
+  var sessionMode = "smart_mix";
+  var cursor = 0;            // which exercise is showing
+  var chosenOption = null;   // the option button the learner has selected
+  var library = null;
+  var startedAt = 0;
+
+  function byId(id) { return document.getElementById(id); }
+  function status(msg) { if (el.status) { el.status.textContent = msg; } }
+
+  function clearError() {
+    if (!el.error) { return; }
+    el.error.textContent = "—";
+    el.error.hidden = true;
+  }
+
+  /* Same failure style as every other card: operation, request, status, body. */
+  function showError(operation, lines) {
+    if (!el.error) { return; }
+    el.error.textContent = ["ERROR during: " + operation].concat(lines).join("\n");
+    el.error.hidden = false;
+  }
+
+  function config() {
+    var apiEl = byId("syncApi");
+    var keyEl = byId("syncKey");
+    return {
+      base: String((apiEl && apiEl.value) || "").trim().replace(/\/+$/, ""),
+      key: String((keyEl && keyEl.value) || "").trim()
+    };
+  }
+
+  function configProblem(cfg) {
+    if (!cfg.base) { return "Worker URL is empty. Fill it in the Cloud sync card and press Save."; }
+    if (!/^https?:\/\//i.test(cfg.base)) { return "Worker URL must start with https://"; }
+    if (!cfg.key) { return "Sync key is empty. Press Generate in the Cloud sync card, then Save."; }
+    if (cfg.key.length < MIN_KEY_LEN) {
+      return "Sync key is only " + cfg.key.length + " characters. At least " + MIN_KEY_LEN + " are required.";
+    }
+    return null;
+  }
+
+  function setBusy(v) {
+    busy = v;
+    var buttons = el.card ? el.card.getElementsByTagName("button") : [];
+    for (var i = 0; i < buttons.length; i++) { buttons[i].disabled = v; }
+  }
+
+  function api(operation, method, path, bodyObj) {
+    var cfg = config();
+    var problem = configProblem(cfg);
+    if (problem) {
+      showError(operation, ["Configuration problem: " + problem]);
+      status("Not configured.");
+      return Promise.reject(new Error(problem));
+    }
+
+    var init = {
+      method: method,
+      headers: { "X-Sync-Key": cfg.key },
+      mode: "cors",
+      cache: "no-store",
+      credentials: "omit"
+    };
+    if (bodyObj !== undefined && bodyObj !== null) {
+      init.headers["Content-Type"] = "application/json";
+      init.body = JSON.stringify(bodyObj);
+    }
+
+    var started = Date.now();
+    return fetch(cfg.base + path, init).then(function (res) {
+      return res.text().then(function (text) {
+        var elapsed = Date.now() - started;
+        var data = null;
+        try { data = JSON.parse(text); } catch (e) { data = null; }
+        if (!res.ok || !data) {
+          var err = new Error("HTTP " + res.status);
+          err.status = res.status;
+          err.data = data;
+          // A 409 is the server saying "not yet" — that is a normal answer to
+          // "can I finish?", not a failure worth a stack of diagnostics.
+          if (res.status !== 409) {
+            showError(operation, [
+              method + " " + cfg.base + path,
+              "HTTP " + res.status + " " + (res.statusText || "") + "  (" + elapsed + " ms)",
+              "",
+              text.slice(0, 1200) || "(empty body)"
+            ]);
+          }
+          throw err;
+        }
+        clearError();
+        return data;
+      });
+    }, function (networkErr) {
+      showError(operation, [
+        method + " " + cfg.base + path,
+        "The request never reached the Worker.",
+        String((networkErr && networkErr.message) || networkErr),
+        "",
+        "Usual causes: wrong Worker URL, no network, or this page's origin is",
+        "missing from ALLOWED_ORIGINS in the Worker configuration."
+      ]);
+      throw networkErr;
+    });
+  }
+
+  function tzOffsetMinutes() {
+    try { return -new Date().getTimezoneOffset(); } catch (e) { return 0; }
+  }
+
+  function clear(node) {
+    while (node && node.firstChild) { node.removeChild(node.firstChild); }
+  }
+
+  function elem(tag, className, text) {
+    var n = document.createElement(tag);
+    if (className) { n.className = className; }
+    if (text !== undefined && text !== null) { n.textContent = text; }
+    return n;
+  }
+
+  /* ---------------- tabs ---------------- */
+
+  function setTab(name) {
+    tab = name === "library" ? "library" : "session";
+    el.tabSession.setAttribute("aria-pressed", tab === "session" ? "true" : "false");
+    el.tabLibrary.setAttribute("aria-pressed", tab === "library" ? "true" : "false");
+    el.sessionPane.hidden = tab !== "session";
+    el.libraryPane.hidden = tab !== "library";
+    if (tab === "library" && !library) { loadLibrary(); }
+  }
+
+  /* ---------------- session ---------------- */
+
+  function sessionQuery() {
+    return "?tz=" + encodeURIComponent(String(tzOffsetMinutes())) +
+      "&mode=" + encodeURIComponent(sessionMode);
+  }
+
+  function loadSession(quiet) {
+    return api("GET /vocab/session", "GET", "/vocab/session" + sessionQuery(), null)
+      .then(function (data) {
+        session = data.session;
+        renderSession();
+        if (!quiet) {
+          status(session
+            ? "Loaded today’s session from the cloud."
+            : "No session yet. Press Start when you are ready.");
+        }
+        return session;
+      });
+  }
+
+  function startSession(mode) {
+    if (busy) { return; }
+    sessionMode = mode || "smart_mix";
+    setBusy(true);
+    setTab("session");
+    status(sessionMode === "smart_mix"
+      ? "Preparing today’s vocabulary…"
+      : "Preparing " + (KIND_LABEL[sessionMode] || sessionMode) + " practice…");
+
+    startedAt = Date.now();
+    api("POST /vocab/session", "POST", "/vocab/session", {
+      practiceMode: sessionMode,
+      timezoneOffsetMinutes: tzOffsetMinutes()
+    }).then(function (data) {
+      session = data.session;
+      cursor = firstUnanswered();
+      renderSession();
+      var msg = data.created
+        ? "New session ready."
+        : "Picked up the session already stored for today — same words, nothing regenerated.";
+      if (data.created && data.aiCalls === 0) {
+        msg += " No AI call was needed.";
+      } else if (data.created && data.aiCalls > 0) {
+        msg += " " + data.aiCalls + " AI request" + (data.aiCalls === 1 ? "" : "s") + " to write the new material.";
+      }
+      status(msg);
+    })["catch"](function (e) {
+      var data = e && e.data;
+      if (data && data.error === "no_daily_plan") {
+        status("Load today’s plan first — the vocabulary session follows what it decided.");
+      } else if (data && data.error === "nothing_to_practise") {
+        status("Nothing to practise yet. Add a word under “My words”, or load today’s plan.");
+      } else if (data && data.error === "new_words_unavailable") {
+        status(data.message);
+      } else if (String(e && e.message).indexOf("HTTP") === 0) {
+        status("Failed. See the error above.");
+      } else {
+        status("Failed.");
+      }
+    })["then"](function () { setBusy(false); }, function () { setBusy(false); });
+  }
+
+  function firstUnanswered() {
+    if (!session) { return 0; }
+    for (var i = 0; i < session.exercises.length; i++) {
+      if (!session.exercises[i].attempted) { return i; }
+    }
+    return Math.max(0, session.exercises.length - 1);
+  }
+
+  function renderSession() {
+    var hasSession = !!(session && session.exercises && session.exercises.length);
+    el.intro.hidden = hasSession;
+    el.running.hidden = !hasSession;
+    el.summary.hidden = true;
+
+    if (!hasSession) {
+      el.progressChip.textContent = "—";
+      el.progressChip.className = "chip";
+      return;
+    }
+
+    var p = session.progress;
+    el.progressChip.textContent = p.attempted + "/" + p.required + " answered";
+    el.progressChip.className = "chip" + (p.readyToComplete ? " pass" : "");
+
+    var bits = [];
+    if (session.practiceMode !== "smart_mix") {
+      bits.push(KIND_LABEL[session.practiceMode] || session.practiceMode);
+    } else {
+      bits.push("Smart Mix");
+    }
+    if (session.counts["new"]) { bits.push(session.counts["new"] + " new"); }
+    if (session.counts.review) { bits.push(session.counts.review + " to review"); }
+    bits.push(session.counts.exercises + " questions");
+    el.meta.textContent = bits.join(" · ");
+
+    if (session.ai && session.ai.state === "degraded" && session.ai.note) {
+      el.aiNote.textContent = session.ai.note;
+      el.aiNote.hidden = false;
+    } else {
+      el.aiNote.hidden = true;
+    }
+
+    el.bar.style.width = (p.required > 0 ? Math.round((p.attempted / p.required) * 100) : 0) + "%";
+    el.rule.textContent = "To finish: " + p.rule;
+
+    if (session.status === "complete") {
+      renderCompleted();
+      return;
+    }
+
+    if (cursor >= session.exercises.length) { cursor = session.exercises.length - 1; }
+    renderExercise(session.exercises[cursor]);
+  }
+
+  function renderCompleted() {
+    clear(el.exercise);
+    el.exercise.appendChild(elem("p", "ex-kind", "Session complete"));
+    el.exercise.appendChild(elem(
+      "p",
+      "ex-question",
+      "Today’s vocabulary is done."
+    ));
+    el.feedback.hidden = true;
+    el.btnNext.hidden = true;
+    el.btnFinish.hidden = true;
+  }
+
+  function renderExercise(ex) {
+    chosenOption = null;
+    clear(el.exercise);
+    el.feedback.hidden = true;
+    el.btnNext.hidden = true;
+    el.btnFinish.hidden = true;
+
+    var head = elem("p", "ex-kind",
+      "Question " + (cursor + 1) + " of " + session.exercises.length + " · " +
+      (KIND_LABEL[ex.kind] || ex.kind));
+    el.exercise.appendChild(head);
+
+    if (ex.prompt.instructionHe) {
+      el.exercise.appendChild(elem("p", "ex-instruction", ex.prompt.instructionHe));
+    }
+
+    var isHebrewQuestion = ex.kind === "he_en";
+    var q = elem("p", "ex-question" + (isHebrewQuestion ? " he" : ""), ex.prompt.question);
+    el.exercise.appendChild(q);
+
+    if (ex.prompt.hintHe) {
+      el.exercise.appendChild(elem("p", "ex-hint", ex.prompt.hintHe));
+    }
+    if (ex.word && ex.word.mastery) {
+      var chips = elem("div", "ai-chips");
+      chips.appendChild(chipFor(ex.word.mastery));
+      if (ex.word.source && SOURCE_LABEL[ex.word.source]) {
+        chips.appendChild(elem("span", "chip", SOURCE_LABEL[ex.word.source]));
+      }
+      el.exercise.appendChild(chips);
+    }
+
+    if (ex.prompt.format === "choice") {
+      renderChoice(ex);
+    } else {
+      renderText(ex);
+    }
+
+    if (ex.attempted) {
+      showFeedback(ex.correct, ex.feedback, ex);
+    }
+  }
+
+  function renderChoice(ex) {
+    var wrap = elem("div", "ex-options");
+    var buttons = [];
+    for (var i = 0; i < ex.prompt.options.length; i++) {
+      (function (value) {
+        var b = elem("button", "secondary", value);
+        b.type = "button";
+        b.setAttribute("aria-pressed", "false");
+        b.addEventListener("click", function () {
+          if (busy || ex.attempted) { return; }
+          chosenOption = value;
+          for (var j = 0; j < buttons.length; j++) {
+            buttons[j].setAttribute("aria-pressed", buttons[j] === b ? "true" : "false");
+          }
+          submit(ex, value);
+        });
+        buttons.push(b);
+        wrap.appendChild(b);
+      }(ex.prompt.options[i]));
+    }
+    el.exercise.appendChild(wrap);
+  }
+
+  function renderText(ex) {
+    var wrap = elem("div", "ex-text");
+    var input;
+    if (ex.kind === "write_sentence") {
+      input = document.createElement("textarea");
+      input.style.minHeight = "84px";
+    } else {
+      input = document.createElement("input");
+      input.type = "text";
+    }
+    input.setAttribute("autocapitalize", "none");
+    input.setAttribute("autocorrect", "off");
+    input.setAttribute("spellcheck", "false");
+    input.placeholder = ex.prompt.placeholder || "Your answer";
+    if (ex.attempted) {
+      input.value = ex.learnerAnswer || "";
+      input.disabled = true;
+    }
+    wrap.appendChild(input);
+
+    var check = elem("button", null, "Check");
+    check.type = "button";
+    check.style.marginTop = "10px";
+    check.addEventListener("click", function () {
+      if (busy) { return; }
+      var v = String(input.value || "").trim();
+      if (!v) { status("Type an answer first."); return; }
+      submit(ex, v);
+    });
+    if (!ex.attempted) {
+      input.addEventListener("keydown", function (e) {
+        if (e.key === "Enter" && ex.kind !== "write_sentence") {
+          e.preventDefault();
+          check.click();
+        }
+      });
+      wrap.appendChild(check);
+    }
+    el.exercise.appendChild(wrap);
+  }
+
+  function submit(ex, answer) {
+    if (busy) { return; }
+    setBusy(true);
+    status(ex.kind === "write_sentence" ? "Checking your sentence…" : "Checking…");
+
+    api("POST /vocab/session/answer", "POST", "/vocab/session/answer", {
+      exerciseId: ex.exerciseId,
+      answer: answer,
+      practiceMode: sessionMode,
+      timezoneOffsetMinutes: tzOffsetMinutes()
+    }).then(function (data) {
+      session = data.session;
+      var updated = session.exercises[cursor];
+      renderExercise(updated);
+      showFeedback(data.correct, data.feedback, updated);
+      var p = session.progress;
+      el.progressChip.textContent = p.attempted + "/" + p.required + " answered";
+      el.progressChip.className = "chip" + (p.readyToComplete ? " pass" : "");
+      el.bar.style.width = (p.required > 0 ? Math.round((p.attempted / p.required) * 100) : 0) + "%";
+      status(data.evaluatedBy === "ai"
+        ? "Checked by the AI coach."
+        : (data.evaluatedBy === "ai_unavailable"
+            ? "Saved. The English itself could not be checked this time."
+            : "Saved to the cloud."));
+    })["catch"](function () {
+      status("Failed. See the error above.");
+    })["then"](function () { setBusy(false); }, function () { setBusy(false); });
+  }
+
+  function showFeedback(correct, fb, ex) {
+    clear(el.feedback);
+    el.feedback.hidden = false;
+    el.feedback.className = "fb " + (correct ? "ok" : "no");
+
+    fb = fb || {};
+    el.feedback.appendChild(elem("div", "fb-head",
+      fb.headlineHe || (correct ? "נכון." : "לא נכון.")));
+
+    if (fb.correctAnswer) {
+      var ca = elem("div", "fb-en");
+      ca.appendChild(elem("span", "fb-label", "Correct answer: "));
+      ca.appendChild(document.createTextNode(fb.correctAnswer));
+      el.feedback.appendChild(ca);
+    }
+    if (fb.correctedSentence) {
+      var cs = elem("div", "fb-en");
+      cs.appendChild(elem("span", "fb-label", "Better: "));
+      cs.appendChild(document.createTextNode(fb.correctedSentence));
+      el.feedback.appendChild(cs);
+    }
+    if (fb.explanationHe) {
+      el.feedback.appendChild(elem("div", "fb-he", fb.explanationHe));
+    }
+    if (fb.noticeHe) {
+      el.feedback.appendChild(elem("div", "fb-he", fb.noticeHe));
+    }
+    if (fb.betterAlternative) {
+      var alt = elem("div", "fb-en");
+      alt.appendChild(elem("span", "fb-label", "More natural: "));
+      alt.appendChild(document.createTextNode(fb.betterAlternative));
+      el.feedback.appendChild(alt);
+    }
+    if (fb.example) {
+      var exm = elem("div", "fb-en");
+      exm.appendChild(elem("span", "fb-label", "In use: "));
+      exm.appendChild(document.createTextNode(fb.example));
+      el.feedback.appendChild(exm);
+    }
+    if (ex && ex.word && ex.word.usefulnessNoteHe && !correct) {
+      el.feedback.appendChild(elem("div", "fb-he", ex.word.usefulnessNoteHe));
+    }
+
+    var more = cursor < session.exercises.length - 1;
+    el.btnNext.hidden = !more;
+    el.btnFinish.hidden = more || !session.progress.readyToComplete;
+    if (!more && !session.progress.readyToComplete) {
+      // Every question has to be answered, so send them back to the ones they
+      // have not done rather than leaving a dead end.
+      el.btnNext.textContent = "Go to the unanswered questions";
+      el.btnNext.hidden = false;
+    } else {
+      el.btnNext.textContent = "Next";
+    }
+  }
+
+  function next() {
+    if (!session) { return; }
+    if (cursor < session.exercises.length - 1) {
+      cursor++;
+    } else {
+      cursor = firstUnanswered();
+    }
+    renderExercise(session.exercises[cursor]);
+  }
+
+  function finish() {
+    if (busy || !session) { return; }
+    setBusy(true);
+    status("Finishing the session…");
+
+    var seconds = startedAt ? Math.round((Date.now() - startedAt) / 1000) : 0;
+    api("POST /vocab/session/complete", "POST", "/vocab/session/complete", {
+      practiceMode: sessionMode,
+      durationSeconds: seconds,
+      timezoneOffsetMinutes: tzOffsetMinutes()
+    }).then(function (data) {
+      session = data.session;
+      library = null;                        // mastery has moved; reload on demand
+      renderSummary(data.summary, data.plan);
+      status(data.plan
+        ? "Session complete. Today’s Plan has been updated — it stays done on every device."
+        : "Practice complete. Your words have been rescheduled.");
+      if (data.plan) {
+        document.dispatchEvent(new CustomEvent("english:plan-updated", { detail: { plan: data.plan } }));
+      }
+    })["catch"](function (e) {
+      var data = e && e.data;
+      if (data && data.error === "session_incomplete") {
+        status("Not finished yet: " + data.rule);
+        cursor = firstUnanswered();
+        renderSession();
+      } else {
+        status("Failed. See the error above.");
+      }
+    })["then"](function () { setBusy(false); }, function () { setBusy(false); });
+  }
+
+  function renderSummary(summary, plan) {
+    el.running.hidden = true;
+    el.intro.hidden = true;
+    clear(el.summary);
+    el.summary.hidden = false;
+
+    el.summary.appendChild(elem("p", "ex-kind", "Session summary"));
+    el.summary.appendChild(elem(
+      "p",
+      "ex-question",
+      summary.itemsCorrect + " of " + summary.itemsAttempted + " right"
+    ));
+
+    addSummaryGroup("Learned today", summary.introduced);
+    addSummaryGroup("Getting stronger", summary.improved);
+    addSummaryGroup("Coming back sooner", summary.needsReview);
+
+    if (plan) {
+      el.summary.appendChild(elem(
+        "p",
+        "note",
+        "Vocabulary is now marked complete in Today’s Plan."
+      ));
+    }
+
+    var again = elem("button", "secondary", "Back to my words");
+    again.type = "button";
+    again.addEventListener("click", function () { setTab("library"); loadLibrary(); });
+    el.summary.appendChild(again);
+  }
+
+  function addSummaryGroup(title, words) {
+    if (!words || !words.length) { return; }
+    var g = elem("div", "vocab-sum-group");
+    g.appendChild(elem("h3", null, title));
+    var ul = document.createElement("ul");
+    for (var i = 0; i < words.length; i++) {
+      var li = document.createElement("li");
+      li.appendChild(document.createTextNode(words[i].english + " — "));
+      var he = elem("span", null, words[i].hebrew);
+      he.setAttribute("dir", "rtl");
+      li.appendChild(he);
+      ul.appendChild(li);
+    }
+    g.appendChild(ul);
+    el.summary.appendChild(g);
+  }
+
+  /* ---------------- library ---------------- */
+
+  function chipFor(mastery) {
+    var c = elem("span", "chip m-" + mastery, MASTERY_LABEL[mastery] || mastery);
+    return c;
+  }
+
+  function loadLibrary() {
+    return api("GET /vocab/library", "GET", "/vocab/library", null).then(function (data) {
+      library = data;
+      renderLibrary();
+      return data;
+    }, function () { /* the error box already says what happened */ });
+  }
+
+  function renderLibrary() {
+    if (!library) { return; }
+
+    var s = library.stats;
+    el.libStats.textContent =
+      s.total + " word" + (s.total === 1 ? "" : "s") + " · " +
+      s.due + " due · " +
+      s.byMastery.mastered + " mastered";
+
+    /* Pending suggestions. Nothing here is being taught: it enters daily
+       learning only when the learner says so. */
+    var pending = library.pending || [];
+    el.pending.hidden = pending.length === 0;
+    el.pendingCount.textContent = String(pending.length);
+    clear(el.pendingList);
+    for (var i = 0; i < pending.length; i++) {
+      el.pendingList.appendChild(suggestionRow(pending[i]));
+    }
+
+    var filter = String((el.search && el.search.value) || "").trim().toLowerCase();
+    clear(el.list);
+    var items = library.items || [];
+    var shown = 0;
+    for (var j = 0; j < items.length; j++) {
+      var v = items[j];
+      if (filter &&
+          v.english.toLowerCase().indexOf(filter) === -1 &&
+          v.hebrew.indexOf(filter) === -1) { continue; }
+      el.list.appendChild(wordRow(v));
+      shown++;
+    }
+    if (!shown) {
+      el.list.appendChild(elem("p", "vocab-empty",
+        items.length
+          ? "No word matches that search."
+          : "No words yet. Add one above, or start today’s session and the app will choose some for you."));
+    }
+  }
+
+  function wordRow(v) {
+    var row = elem("div", "vocab-row");
+    var main = elem("div", "main");
+    main.appendChild(elem("div", "en", v.english));
+    main.appendChild(elem("div", "he", v.hebrew));
+
+    var sub = [];
+    if (SOURCE_LABEL[v.source]) { sub.push(SOURCE_LABEL[v.source]); }
+    if (v.partOfSpeech) { sub.push(v.partOfSpeech); }
+    if (v.register && v.register !== "neutral") { sub.push(v.register); }
+    sub.push(dueText(v));
+    main.appendChild(elem("div", "sub", sub.join(" · ")));
+    if (v.example) { main.appendChild(elem("div", "sub", "“" + v.example + "”")); }
+
+    var acts = elem("div", "acts");
+    acts.appendChild(chipFor(v.mastery));
+    row.appendChild(main);
+    row.appendChild(acts);
+    return row;
+  }
+
+  function dueText(v) {
+    if (v.dueAt === null || v.dueAt === undefined) { return "not practised yet"; }
+    var days = Math.ceil((v.dueAt - Date.now()) / 86400000);
+    if (days <= 0) { return "due now"; }
+    if (days === 1) { return "back tomorrow"; }
+    return "back in " + days + " days";
+  }
+
+  function suggestionRow(v) {
+    var row = elem("div", "vocab-row");
+    var main = elem("div", "main");
+    main.appendChild(elem("div", "en", v.english));
+    main.appendChild(elem("div", "he", v.hebrew));
+    if (v.contextNote) { main.appendChild(elem("div", "sub", v.contextNote)); }
+
+    var acts = elem("div", "acts");
+    var add = elem("button", "mini", "Add");
+    add.type = "button";
+    add.addEventListener("click", function () { decide(v.id, "approve"); });
+    var skip = elem("button", "mini reject", "Skip");
+    skip.type = "button";
+    skip.addEventListener("click", function () { decide(v.id, "reject"); });
+    acts.appendChild(add);
+    acts.appendChild(skip);
+
+    row.appendChild(main);
+    row.appendChild(acts);
+    return row;
+  }
+
+  function decide(id, action) {
+    if (busy) { return; }
+    setBusy(true);
+    status(action === "approve" ? "Adding to your vocabulary…" : "Skipping…");
+    api(
+      "POST /vocab/suggestions/:id/" + action,
+      "POST",
+      "/vocab/suggestions/" + encodeURIComponent(id) + "/" + action,
+      {}
+    ).then(function (data) {
+      status(action === "approve"
+        ? "“" + data.item.english + "” is now part of your daily learning."
+        : "Skipped. It will not be suggested again.");
+      return loadLibrary();
+    })["catch"](function () {
+      status("Failed. See the error above.");
+    })["then"](function () { setBusy(false); }, function () { setBusy(false); });
+  }
+
+  function addWord() {
+    if (busy) { return; }
+    var term = String(el.addTerm.value || "").trim();
+    if (!term) { status("Type an English word or phrase first."); return; }
+    var hebrew = String((el.addHebrew && el.addHebrew.value) || "").trim();
+
+    setBusy(true);
+    status("Saving “" + term + "”…");
+    var body = { term: term };
+    if (hebrew) { body.hebrew = hebrew; }
+
+    api("POST /vocab/items", "POST", "/vocab/items", body).then(function (data) {
+      el.addTerm.value = "";
+      if (el.addHebrew) { el.addHebrew.value = ""; }
+      el.addExtra.hidden = true;
+      status(data.enriched
+        ? "Saved. The meaning, definition and an example were filled in for you."
+        : (data.aiNote ? "Saved. " + data.aiNote : "Saved."));
+      return loadLibrary();
+    })["catch"](function (e) {
+      var data = e && e.data;
+      if (data && data.error === "already_saved") {
+        status("“" + term + "” is already in your vocabulary.");
+      } else if (data && data.error === "enrichment_unavailable") {
+        // The one case where the learner has to supply something: no model and
+        // no meaning. Reveal the field rather than losing what they typed.
+        el.addExtra.hidden = false;
+        status("The AI could not fill this in. Add the Hebrew meaning yourself and press Add again.");
+      } else if (data && data.field === "hebrew") {
+        el.addExtra.hidden = false;
+        status("Add the Hebrew meaning and press Add again.");
+      } else {
+        status("Failed. See the error above.");
+      }
+    })["then"](function () { setBusy(false); }, function () { setBusy(false); });
+  }
+
+  /* ---------------- init ---------------- */
+
+  function init() {
+    el.card = byId("vocabCard");
+    el.status = byId("vocabStatus");
+    el.error = byId("vocabError");
+    el.progressChip = byId("vocabProgressChip");
+    el.tabSession = byId("btnTabSession");
+    el.tabLibrary = byId("btnTabLibrary");
+    el.sessionPane = byId("vocabSessionPane");
+    el.libraryPane = byId("vocabLibraryPane");
+    el.intro = byId("vocabIntro");
+    el.running = byId("vocabRunning");
+    el.summary = byId("vocabSummary");
+    el.meta = byId("vocabMeta");
+    el.aiNote = byId("vocabAiNote");
+    el.bar = byId("vocabBar");
+    el.exercise = byId("vocabExercise");
+    el.feedback = byId("vocabFeedback");
+    el.btnNext = byId("btnVocabNext");
+    el.btnFinish = byId("btnVocabFinish");
+    el.rule = byId("vocabRule");
+    el.addTerm = byId("vocabAddTerm");
+    el.addHebrew = byId("vocabAddHebrew");
+    el.addExtra = byId("vocabAddExtra");
+    el.pending = byId("vocabPending");
+    el.pendingCount = byId("vocabPendingCount");
+    el.pendingList = byId("vocabPendingList");
+    el.list = byId("vocabList");
+    el.libStats = byId("vocabLibStats");
+    el.search = byId("vocabSearch");
+    el.focusMode = byId("vocabFocusMode");
+
+    if (!el.card || !el.status || !el.exercise) { return; }
+
+    el.tabSession.addEventListener("click", function () { setTab("session"); });
+    el.tabLibrary.addEventListener("click", function () { setTab("library"); });
+    byId("btnVocabStart").addEventListener("click", function () { startSession("smart_mix"); });
+    el.btnNext.addEventListener("click", next);
+    el.btnFinish.addEventListener("click", finish);
+    byId("btnVocabAdd").addEventListener("click", addWord);
+    byId("btnVocabPractice").addEventListener("click", function () {
+      startSession(el.focusMode.value);
+    });
+    el.addTerm.addEventListener("keydown", function (e) {
+      if (e.key === "Enter") { e.preventDefault(); addWord(); }
+    });
+    el.search.addEventListener("input", renderLibrary);
+
+    /* Today's Plan asks this card to take over when the learner presses Start
+       on the Vocabulary activity. */
+    document.addEventListener("english:open-vocabulary", function () {
+      el.card.scrollIntoView({ behavior: "smooth", block: "start" });
+      startSession("smart_mix");
+    });
+
+    clearError();
+    setTab("session");
+
+    var cfg = config();
+    if (!configProblem(cfg)) {
+      status("Checking for today’s session…");
+      loadSession(false)["catch"](function () {
+        status("Could not reach the Worker. See the error above.");
+      });
+    }
+  }
+
+  try {
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", init);
+    } else {
+      init();
+    }
+  } catch (e) {
+    /* Every other section must keep working if this one fails. */
+    try { window.console && window.console.error && window.console.error(e); } catch (e2) { /* ignore */ }
+  }
+})();
+</script>
+
 </body>
 </html>

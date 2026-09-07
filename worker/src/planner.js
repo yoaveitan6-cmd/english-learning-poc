@@ -110,6 +110,25 @@ export const MASTERY_INTERVAL_DAYS = {
   mastered: 21
 };
 
+/**
+ * The one refinement on top of the ladder: a word the learner keeps getting
+ * wrong comes back at HALF its rung's spacing.
+ *
+ * Without it, a word that oscillates between familiar and strong settles into
+ * a comfortable 3-7 day rhythm while still being unlearned. The test is
+ * deliberately blunt — at least LAPSE_THRESHOLD failures AND no more successes
+ * than failures — so one bad day cannot trigger it, and a word that is finally
+ * being learned climbs back out of it on its own.
+ */
+export const LAPSE_THRESHOLD = 3;
+export const STRUGGLING_INTERVAL_DIVISOR = 2;
+
+export function isStruggling(state) {
+  const failures = Math.max(0, Number(state && state.failures) || 0);
+  const successes = Math.max(0, Number(state && state.successes) || 0);
+  return failures >= LAPSE_THRESHOLD && successes <= failures;
+}
+
 /* ---------------- learning target lifecycle ---------------- */
 
 export const TARGET_STATUSES = ["observed", "needs_work", "improving", "monitoring"];
@@ -818,22 +837,37 @@ export function nextTargetStatus(current, t, now) {
 
 /**
  * Moves one vocabulary item along the mastery ladder and re-schedules it.
+ *
  * A success climbs one rung, a failure drops one — never all the way down,
  * because forgetting a strong word once is not the same as never knowing it.
+ * A word being repeatedly failed then gets its interval halved on top of that
+ * (see isStruggling), so difficulty shows up as frequency.
+ *
+ * This is the ONLY scheduler in the product. src/vocabulary.js re-exports it as
+ * scheduleAfterAnswer rather than growing a second one, so the older activity
+ * completion path and the new session path can never drift into two different
+ * ideas of when a word is due. No AI call influences any of it.
  */
 export function applyVocabularyEvidence(state, evidence) {
   const now = Number(evidence.now);
   const correct = !!evidence.correct;
-  const idx = Math.max(0, MASTERY_LADDER.indexOf(state.mastery || "new"));
+  const idx = Math.max(0, MASTERY_LADDER.indexOf((state && state.mastery) || "new"));
   const nextIdx = clamp(correct ? idx + 1 : idx - 1, 0, MASTERY_LADDER.length - 1);
   const mastery = MASTERY_LADDER[nextIdx];
-  const intervalDays = MASTERY_INTERVAL_DAYS[mastery];
+
+  const successes = (Number(state && state.successes) || 0) + (correct ? 1 : 0);
+  const failures = (Number(state && state.failures) || 0) + (correct ? 0 : 1);
+
+  let intervalDays = MASTERY_INTERVAL_DAYS[mastery];
+  if (isStruggling({ successes: successes, failures: failures })) {
+    intervalDays = Math.ceil(intervalDays / STRUGGLING_INTERVAL_DIVISOR);
+  }
 
   return Object.assign({}, state, {
     mastery: mastery,
-    successes: (Number(state.successes) || 0) + (correct ? 1 : 0),
-    failures: (Number(state.failures) || 0) + (correct ? 0 : 1),
-    streak: correct ? (Number(state.streak) || 0) + 1 : 0,
+    successes: successes,
+    failures: failures,
+    streak: correct ? (Number(state && state.streak) || 0) + 1 : 0,
     intervalDays: intervalDays,
     lastPracticedAt: now,
     dueAt: now + intervalDays * DAY_MS,
