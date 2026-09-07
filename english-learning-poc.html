@@ -1,0 +1,889 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>English Learning HTML POC</title>
+<style>
+  :root {
+    --bg: #f6f7f9;
+    --card: #ffffff;
+    --ink: #16181d;
+    --muted: #5b6270;
+    --line: #dfe3ea;
+    --accent: #1f5fd0;
+    --accent-ink: #ffffff;
+    --pass-bg: #e4f5e8;
+    --pass-ink: #1c6b35;
+    --fail-bg: #fdeaea;
+    --fail-ink: #9b1c1c;
+    --unknown-bg: #eceff3;
+    --unknown-ink: #55606f;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    max-width: 100%;
+    overflow-x: hidden;
+  }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    -webkit-text-size-adjust: 100%;
+    padding: 16px 14px 48px;
+  }
+  .wrap { max-width: 560px; margin: 0 auto; }
+  h1 {
+    font-size: 22px;
+    line-height: 1.25;
+    margin: 4px 0 4px;
+    letter-spacing: -0.01em;
+  }
+  .sub { color: var(--muted); font-size: 14px; margin: 0 0 18px; }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 14px;
+    margin-bottom: 14px;
+  }
+  h2 {
+    font-size: 15px;
+    margin: 0 0 10px;
+    font-weight: 650;
+  }
+  button {
+    font: inherit;
+    font-weight: 600;
+    width: 100%;
+    min-height: 60px;
+    padding: 14px 16px;
+    border-radius: 12px;
+    border: 1px solid var(--accent);
+    background: var(--accent);
+    color: var(--accent-ink);
+    cursor: pointer;
+    -webkit-appearance: none;
+    appearance: none;
+    touch-action: manipulation;
+  }
+  button.secondary {
+    background: var(--card);
+    color: var(--ink);
+    border-color: var(--line);
+    min-height: 46px;
+    font-weight: 500;
+  }
+  button:disabled { opacity: 0.5; cursor: default; }
+  button:focus-visible { outline: 3px solid #9dbdf5; outline-offset: 2px; }
+  label { display: block; font-size: 14px; color: var(--muted); margin: 0 0 6px; }
+  textarea {
+    font: inherit;
+    width: 100%;
+    min-height: 120px;
+    padding: 12px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: #fff;
+    color: var(--ink);
+    resize: vertical;
+    -webkit-appearance: none;
+    appearance: none;
+  }
+  textarea:focus-visible { outline: 3px solid #9dbdf5; outline-offset: 1px; }
+  .status {
+    font-size: 14px;
+    color: var(--muted);
+    margin-top: 10px;
+    overflow-wrap: anywhere;
+  }
+  .row {
+    display: flex;
+    gap: 10px;
+    align-items: baseline;
+    justify-content: space-between;
+    padding: 7px 0;
+    border-bottom: 1px solid var(--line);
+    font-size: 13px;
+  }
+  .row:last-child { border-bottom: 0; }
+  .row .k { color: var(--muted); flex: 0 0 auto; max-width: 45%; }
+  .row .v {
+    text-align: right;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    font-variant-numeric: tabular-nums;
+  }
+  .chip {
+    display: inline-block;
+    padding: 1px 7px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    margin-left: 6px;
+    vertical-align: 1px;
+    background: var(--unknown-bg);
+    color: var(--unknown-ink);
+  }
+  .chip.pass { background: var(--pass-bg); color: var(--pass-ink); }
+  .chip.fail { background: var(--fail-bg); color: var(--fail-ink); }
+  .chip.hide { display: none; }
+  #log {
+    font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    background: #f2f4f7;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 10px;
+    max-height: 220px;
+    overflow-y: auto;
+    margin: 0;
+  }
+  .note { font-size: 13px; color: var(--muted); margin: 10px 0 0; }
+  .stack > * + * { margin-top: 10px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>English Learning HTML POC</h1>
+  <p class="sub">Browser-native microphone, speech recognition and speech synthesis check. Nothing is sent anywhere by this page.</p>
+
+  <div class="card">
+    <button id="btnStart" type="button">Start speaking</button>
+    <p class="status" id="startStatus">Idle. Press the button to test the microphone, then speak one English sentence.</p>
+  </div>
+
+  <div class="card">
+    <label for="transcript">Transcript (editable)</label>
+    <textarea id="transcript" placeholder="Recognized speech appears here. You can also type text and press Speak."></textarea>
+  </div>
+
+  <div class="card">
+    <button id="btnSpeak" type="button">Speak</button>
+    <p class="status" id="speakStatus">Idle. Nothing is spoken until you press Speak.</p>
+  </div>
+
+  <div class="card">
+    <h2>Microphone permission</h2>
+    <div id="micRows"></div>
+  </div>
+
+  <div class="card">
+    <h2>Speech recognition</h2>
+    <div id="srRows"></div>
+  </div>
+
+  <div class="card">
+    <h2>Text to speech</h2>
+    <div id="ttsRows"></div>
+  </div>
+
+  <div class="card">
+    <h2>Environment</h2>
+    <div id="envRows"></div>
+    <p class="note">Rows in this section report what the page can detect. The three test sections above stay UNKNOWN until a test actually completes.</p>
+  </div>
+
+  <div class="card stack">
+    <h2>Event log</h2>
+    <pre id="log">—</pre>
+    <button id="btnCopy" class="secondary" type="button">Copy diagnostics</button>
+    <button id="btnReset" class="secondary" type="button">Reset test results</button>
+  </div>
+
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  /* ---------------- helpers ---------------- */
+
+  var refs = Object.create(null);
+  var logLines = [];
+  var logEl = null;
+
+  function byId(id) {
+    return document.getElementById(id);
+  }
+
+  function nowStamp() {
+    try { return new Date().toISOString(); } catch (e) { return "?"; }
+  }
+
+  function log(msg) {
+    logLines.push(nowStamp() + "  " + msg);
+    if (logLines.length > 200) { logLines.shift(); }
+    if (logEl) {
+      logEl.textContent = logLines.join("\n");
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+  }
+
+  function makeRows(containerId, defs) {
+    var host = byId(containerId);
+    if (!host) { return; }
+    for (var i = 0; i < defs.length; i++) {
+      var key = defs[i][0];
+      var label = defs[i][1];
+
+      var row = document.createElement("div");
+      row.className = "row";
+
+      var k = document.createElement("span");
+      k.className = "k";
+      k.textContent = label;
+
+      var v = document.createElement("span");
+      v.className = "v";
+
+      var text = document.createElement("span");
+      text.textContent = "—";
+
+      var chip = document.createElement("span");
+      chip.className = "chip hide";
+
+      v.appendChild(text);
+      v.appendChild(chip);
+      row.appendChild(k);
+      row.appendChild(v);
+      host.appendChild(row);
+
+      refs[key] = { text: text, chip: chip };
+    }
+  }
+
+  // status: "pass" | "fail" | "unknown" | null (no chip)
+  function set(key, value, status) {
+    var r = refs[key];
+    if (!r) { return; }
+    var v = (value === undefined || value === null || value === "") ? "—" : String(value);
+    r.text.textContent = v;
+    if (status) {
+      r.chip.className = "chip " + (status === "pass" ? "pass" : status === "fail" ? "fail" : "");
+      r.chip.textContent = status === "pass" ? "PASS" : status === "fail" ? "FAIL" : "UNKNOWN";
+    } else {
+      r.chip.className = "chip hide";
+      r.chip.textContent = "";
+    }
+  }
+
+  function has(fn) {
+    try { return !!fn(); } catch (e) { return false; }
+  }
+
+  function errName(e) {
+    try { return (e && e.name) ? String(e.name) : "(no name)"; } catch (x) { return "(unreadable)"; }
+  }
+
+  function errMsg(e) {
+    try { return (e && e.message) ? String(e.message) : "(no message)"; } catch (x) { return "(unreadable)"; }
+  }
+
+  /* ---------------- row definitions ---------------- */
+
+  var MIC_ROWS = [
+    ["mic.result", "Microphone test result"],
+    ["mic.mediaDevices", "navigator.mediaDevices"],
+    ["mic.gum", "getUserMedia"],
+    ["mic.tracks", "Audio tracks received / stopped"],
+    ["mic.errName", "Error name"],
+    ["mic.errMsg", "Error message"]
+  ];
+
+  var SR_ROWS = [
+    ["sr.result", "Recognition test result"],
+    ["sr.std", "SpeechRecognition available"],
+    ["sr.webkit", "webkitSpeechRecognition available"],
+    ["sr.onstart", "onstart"],
+    ["sr.onresult", "onresult"],
+    ["sr.onerror", "onerror"],
+    ["sr.onend", "onend"],
+    ["sr.errCode", "Error code"],
+    ["sr.errMsg", "Error message"],
+    ["sr.time", "Click to final transcript"]
+  ];
+
+  var TTS_ROWS = [
+    ["tts.result", "Speech test result"],
+    ["tts.avail", "speechSynthesis available"],
+    ["tts.voiceCount", "Voices loaded"],
+    ["tts.voiceName", "Selected voice name"],
+    ["tts.voiceLang", "Selected voice language"],
+    ["tts.started", "Speech started"],
+    ["tts.err", "Error"]
+  ];
+
+  var ENV_ROWS = [
+    ["env.time", "Timestamp"],
+    ["env.href", "location.href"],
+    ["env.protocol", "location.protocol"],
+    ["env.origin", "location.origin"],
+    ["env.secure", "isSecureContext"],
+    ["env.top", "window.top === window"],
+    ["env.ua", "navigator.userAgent"],
+    ["env.mediaDevices", "mediaDevices available"],
+    ["env.gum", "getUserMedia available"],
+    ["env.sr", "SpeechRecognition available"],
+    ["env.wsr", "webkitSpeechRecognition available"],
+    ["env.tts", "speechSynthesis available"]
+  ];
+
+  /* ---------------- state ---------------- */
+
+  var btnStart, btnSpeak, btnCopy, btnReset, transcriptEl, startStatus, speakStatus;
+  var recognitionRunning = false;
+  var clickTime = 0;
+  var watchdog = 0;
+
+  /* ---------------- stage 5: environment ---------------- */
+
+  function yesNo(b) { return b ? "yes" : "no"; }
+
+  function refreshEnv() {
+    set("env.time", nowStamp());
+
+    try { set("env.href", location.href); } catch (e) { set("env.href", "(unreadable)"); }
+    try { set("env.protocol", location.protocol); } catch (e) { set("env.protocol", "(unreadable)"); }
+    try { set("env.origin", location.origin); } catch (e) { set("env.origin", "(unreadable)"); }
+
+    var secure = has(function () { return window.isSecureContext; });
+    set("env.secure", yesNo(secure), secure ? "pass" : "fail");
+
+    var isTop;
+    try { isTop = (window.top === window); } catch (e) { isTop = false; }
+    set("env.top", yesNo(isTop), isTop ? "pass" : "fail");
+
+    try { set("env.ua", navigator.userAgent); } catch (e) { set("env.ua", "(unreadable)"); }
+
+    var md = has(function () { return navigator.mediaDevices; });
+    set("env.mediaDevices", yesNo(md), md ? "pass" : "fail");
+
+    var gum = has(function () { return navigator.mediaDevices && typeof navigator.mediaDevices.getUserMedia === "function"; });
+    set("env.gum", yesNo(gum), gum ? "pass" : "fail");
+
+    var sr = has(function () { return window.SpeechRecognition; });
+    var wsr = has(function () { return window.webkitSpeechRecognition; });
+    set("env.sr", yesNo(sr), sr ? "pass" : "fail");
+    set("env.wsr", yesNo(wsr), wsr ? "pass" : "fail");
+
+    var tts = has(function () { return window.speechSynthesis && typeof window.speechSynthesis.speak === "function"; });
+    set("env.tts", yesNo(tts), tts ? "pass" : "fail");
+
+    // mirror the detection rows inside the test sections
+    set("mic.mediaDevices", yesNo(md), md ? "pass" : "fail");
+    set("mic.gum", yesNo(gum), gum ? "pass" : "fail");
+    set("sr.std", yesNo(sr), sr ? "pass" : "fail");
+    set("sr.webkit", yesNo(wsr), wsr ? "pass" : "fail");
+    set("tts.avail", yesNo(tts), tts ? "pass" : "fail");
+  }
+
+  function resetResults() {
+    set("mic.result", "not tested yet", "unknown");
+    set("mic.tracks", "—");
+    set("mic.errName", "—");
+    set("mic.errMsg", "—");
+
+    set("sr.result", "not tested yet", "unknown");
+    set("sr.onstart", "not fired");
+    set("sr.onresult", "not fired");
+    set("sr.onerror", "not fired");
+    set("sr.onend", "not fired");
+    set("sr.errCode", "—");
+    set("sr.errMsg", "—");
+    set("sr.time", "—");
+
+    set("tts.result", "not tested yet", "unknown");
+    set("tts.voiceName", "—");
+    set("tts.voiceLang", "—");
+    set("tts.started", "no");
+    set("tts.err", "—");
+
+    refreshEnv();
+    log("Test results reset.");
+  }
+
+  /* ---------------- stage 2: microphone permission ---------------- */
+
+  function testMicrophone() {
+    return new Promise(function (resolve) {
+      var md = has(function () { return navigator.mediaDevices; });
+      var gum = has(function () { return navigator.mediaDevices && typeof navigator.mediaDevices.getUserMedia === "function"; });
+
+      if (!md || !gum) {
+        set("mic.result", "getUserMedia not available in this browser context", "fail");
+        log("MIC: getUserMedia unavailable (mediaDevices=" + md + ", getUserMedia=" + gum + ")");
+        resolve(false);
+        return;
+      }
+
+      set("mic.result", "requesting permission…", "unknown");
+      log("MIC: calling getUserMedia({ audio: true })");
+
+      var p;
+      try {
+        p = navigator.mediaDevices.getUserMedia({ audio: true });
+      } catch (e) {
+        set("mic.result", "threw synchronously", "fail");
+        set("mic.errName", errName(e));
+        set("mic.errMsg", errMsg(e));
+        log("MIC: sync throw " + errName(e) + " — " + errMsg(e));
+        resolve(false);
+        return;
+      }
+
+      if (!p || typeof p.then !== "function") {
+        set("mic.result", "getUserMedia did not return a promise", "fail");
+        resolve(false);
+        return;
+      }
+
+      p.then(function (stream) {
+        var count = 0;
+        try {
+          var tracks = stream.getTracks ? stream.getTracks() : [];
+          count = tracks.length;
+          for (var i = 0; i < tracks.length; i++) {
+            try { tracks[i].stop(); } catch (e) { /* ignore */ }
+          }
+        } catch (e) { /* ignore */ }
+        set("mic.tracks", count + " received, all stopped");
+        set("mic.result", "permission granted", "pass");
+        log("MIC: permission granted, " + count + " track(s) stopped immediately");
+        resolve(true);
+      })["catch"](function (err) {
+        set("mic.errName", errName(err));
+        set("mic.errMsg", errMsg(err));
+        set("mic.result", "permission failed", "fail");
+        log("MIC: failed " + errName(err) + " — " + errMsg(err));
+        resolve(false);
+      });
+    });
+  }
+
+  /* ---------------- stage 3: speech recognition ---------------- */
+
+  function testRecognition() {
+    var Ctor = null;
+    try { Ctor = window.SpeechRecognition || window.webkitSpeechRecognition || null; } catch (e) { Ctor = null; }
+
+    if (!Ctor) {
+      set("sr.result", "SpeechRecognition not supported here", "fail");
+      startStatus.textContent = "Speech recognition is not available in this browser. The Speak button still works independently.";
+      log("SR: no constructor available");
+      finishRecognition();
+      return;
+    }
+
+    var rec;
+    try {
+      rec = new Ctor();
+    } catch (e) {
+      set("sr.result", "constructor threw", "fail");
+      set("sr.errCode", errName(e));
+      set("sr.errMsg", errMsg(e));
+      log("SR: constructor threw " + errName(e) + " — " + errMsg(e));
+      finishRecognition();
+      return;
+    }
+
+    try {
+      rec.lang = "en-US";
+      rec.continuous = false;
+      rec.interimResults = false;
+    } catch (e) {
+      log("SR: could not set options — " + errMsg(e));
+    }
+
+    rec.onstart = function () {
+      set("sr.onstart", "fired at " + (Date.now() - clickTime) + " ms");
+      startStatus.textContent = "Listening. Say one English sentence, then pause.";
+      log("SR: onstart");
+    };
+
+    rec.onresult = function (event) {
+      var text = "";
+      try {
+        for (var i = event.resultIndex; i < event.results.length; i++) {
+          if (event.results[i].isFinal) {
+            text += event.results[i][0].transcript;
+          }
+        }
+        if (!text && event.results.length) {
+          text = event.results[0][0].transcript || "";
+        }
+      } catch (e) {
+        log("SR: could not read result — " + errMsg(e));
+      }
+      var elapsed = Date.now() - clickTime;
+      set("sr.onresult", "fired");
+      set("sr.time", elapsed + " ms");
+      if (text) {
+        transcriptEl.value = text;
+        set("sr.result", "final transcript received", "pass");
+        startStatus.textContent = "Transcript captured. Edit it if you want, then press Speak.";
+        log("SR: onresult — " + JSON.stringify(text) + " (" + elapsed + " ms)");
+      } else {
+        set("sr.result", "result event with empty transcript", "fail");
+        log("SR: onresult with empty transcript");
+      }
+    };
+
+    rec.onerror = function (event) {
+      var code = "(none)";
+      var msg = "(none)";
+      try { code = event && event.error ? String(event.error) : "(none)"; } catch (e) { /* ignore */ }
+      try { msg = event && event.message ? String(event.message) : "(none)"; } catch (e) { /* ignore */ }
+      set("sr.onerror", "fired");
+      set("sr.errCode", code);
+      set("sr.errMsg", msg);
+      set("sr.result", "recognition error", "fail");
+      startStatus.textContent = "Recognition error: " + code + ". Details are in the diagnostics below.";
+      log("SR: onerror code=" + code + " message=" + msg);
+    };
+
+    rec.onend = function () {
+      set("sr.onend", "fired at " + (Date.now() - clickTime) + " ms");
+      log("SR: onend");
+      finishRecognition();
+    };
+
+    try {
+      rec.start();
+      recognitionRunning = true;
+      set("sr.result", "listening…", "unknown");
+      log("SR: start() called");
+      watchdog = window.setTimeout(function () {
+        if (recognitionRunning) {
+          log("SR: no onend after 25 s — re-enabling the button");
+          finishRecognition();
+        }
+      }, 25000);
+    } catch (e) {
+      set("sr.result", "start() threw", "fail");
+      set("sr.errCode", errName(e));
+      set("sr.errMsg", errMsg(e));
+      log("SR: start() threw " + errName(e) + " — " + errMsg(e));
+      finishRecognition();
+    }
+  }
+
+  function finishRecognition() {
+    recognitionRunning = false;
+    if (watchdog) { window.clearTimeout(watchdog); watchdog = 0; }
+    btnStart.disabled = false;
+    btnStart.textContent = "Start speaking";
+  }
+
+  /* ---------------- stage 4: text to speech ---------------- */
+
+  function loadVoices() {
+    return new Promise(function (resolve) {
+      var v = [];
+      try { v = window.speechSynthesis.getVoices() || []; } catch (e) { v = []; }
+      if (v.length) { resolve(v); return; }
+
+      var done = false;
+      function finish() {
+        if (done) { return; }
+        done = true;
+        try { window.speechSynthesis.removeEventListener("voiceschanged", finish); } catch (e) { /* ignore */ }
+        var list = [];
+        try { list = window.speechSynthesis.getVoices() || []; } catch (e) { list = []; }
+        resolve(list);
+      }
+
+      try {
+        window.speechSynthesis.addEventListener("voiceschanged", finish);
+      } catch (e) {
+        try { window.speechSynthesis.onvoiceschanged = finish; } catch (e2) { /* ignore */ }
+      }
+      window.setTimeout(finish, 2000);
+    });
+  }
+
+  function pickVoice(voices) {
+    var i;
+    for (i = 0; i < voices.length; i++) {
+      if (voices[i] && typeof voices[i].lang === "string" && voices[i].lang.replace("_", "-").toLowerCase() === "en-us") {
+        return voices[i];
+      }
+    }
+    for (i = 0; i < voices.length; i++) {
+      if (voices[i] && typeof voices[i].lang === "string" && voices[i].lang.toLowerCase().indexOf("en") === 0) {
+        return voices[i];
+      }
+    }
+    return null;
+  }
+
+  function doSpeak() {
+    var avail = has(function () { return window.speechSynthesis && typeof window.speechSynthesis.speak === "function"; });
+    if (!avail) {
+      set("tts.result", "speechSynthesis not available", "fail");
+      speakStatus.textContent = "Speech synthesis is not available in this browser.";
+      log("TTS: speechSynthesis unavailable");
+      return;
+    }
+
+    var text = transcriptEl.value;
+    if (!text || !text.trim()) {
+      set("tts.result", "transcript box is empty", "fail");
+      speakStatus.textContent = "Type or record some text first, then press Speak.";
+      log("TTS: nothing to speak");
+      return;
+    }
+
+    try { window.speechSynthesis.cancel(); } catch (e) { log("TTS: cancel() threw — " + errMsg(e)); }
+
+    set("tts.result", "preparing…", "unknown");
+    set("tts.started", "no");
+    set("tts.err", "—");
+    btnSpeak.disabled = true;
+    speakStatus.textContent = "Loading voices…";
+
+    loadVoices().then(function (voices) {
+      set("tts.voiceCount", voices.length);
+
+      var voice = pickVoice(voices);
+      if (voice) {
+        set("tts.voiceName", voice.name);
+        set("tts.voiceLang", voice.lang);
+        log("TTS: selected voice " + voice.name + " (" + voice.lang + ")");
+      } else {
+        set("tts.voiceName", voices.length ? "no en-* voice found" : "no voices reported");
+        set("tts.voiceLang", "falling back to lang=en-US");
+        log("TTS: no en-* voice found; using utterance lang en-US");
+      }
+
+      var utter;
+      try {
+        utter = new SpeechSynthesisUtterance(text);
+      } catch (e) {
+        set("tts.result", "utterance constructor threw", "fail");
+        set("tts.err", errName(e) + " — " + errMsg(e));
+        btnSpeak.disabled = false;
+        speakStatus.textContent = "Could not create the utterance.";
+        log("TTS: constructor threw " + errName(e));
+        return;
+      }
+
+      if (voice) {
+        try { utter.voice = voice; } catch (e) { /* ignore */ }
+        utter.lang = voice.lang || "en-US";
+      } else {
+        utter.lang = "en-US";
+      }
+
+      var startedFlag = false;
+
+      utter.onstart = function () {
+        startedFlag = true;
+        set("tts.started", "yes");
+        set("tts.result", "speaking", "pass");
+        speakStatus.textContent = "Speaking…";
+        log("TTS: onstart");
+      };
+
+      utter.onend = function () {
+        btnSpeak.disabled = false;
+        if (startedFlag) {
+          set("tts.result", "finished speaking", "pass");
+          speakStatus.textContent = "Done. Press Speak again to repeat.";
+        } else {
+          set("tts.result", "ended without ever starting", "fail");
+          speakStatus.textContent = "Speech ended without starting. See the diagnostics below.";
+        }
+        log("TTS: onend (started=" + startedFlag + ")");
+      };
+
+      utter.onerror = function (event) {
+        var code = "(none)";
+        try { code = event && event.error ? String(event.error) : "(none)"; } catch (e) { /* ignore */ }
+        set("tts.err", code);
+        set("tts.result", "speech error", "fail");
+        btnSpeak.disabled = false;
+        speakStatus.textContent = "Speech error: " + code;
+        log("TTS: onerror " + code);
+      };
+
+      try {
+        window.speechSynthesis.speak(utter);
+        log("TTS: speak() called with " + text.length + " characters");
+        window.setTimeout(function () {
+          if (!startedFlag) {
+            btnSpeak.disabled = false;
+            if (refs["tts.result"] && refs["tts.result"].text.textContent === "preparing…") {
+              set("tts.result", "no onstart within 4 s", "fail");
+              speakStatus.textContent = "No audio started within 4 seconds. Check the system volume and output device.";
+            }
+          }
+        }, 4000);
+      } catch (e) {
+        set("tts.result", "speak() threw", "fail");
+        set("tts.err", errName(e) + " — " + errMsg(e));
+        btnSpeak.disabled = false;
+        speakStatus.textContent = "speak() threw an error.";
+        log("TTS: speak() threw " + errName(e) + " — " + errMsg(e));
+      }
+    })["catch"](function (e) {
+      set("tts.result", "voice loading failed", "fail");
+      set("tts.err", errMsg(e));
+      btnSpeak.disabled = false;
+      speakStatus.textContent = "Could not load voices.";
+      log("TTS: voice loading failed — " + errMsg(e));
+    });
+  }
+
+  /* ---------------- diagnostics export ---------------- */
+
+  function diagnosticsText() {
+    var out = ["English Learning HTML POC — diagnostics", nowStamp(), ""];
+    var sections = [
+      ["MICROPHONE", MIC_ROWS],
+      ["SPEECH RECOGNITION", SR_ROWS],
+      ["TEXT TO SPEECH", TTS_ROWS],
+      ["ENVIRONMENT", ENV_ROWS]
+    ];
+    for (var s = 0; s < sections.length; s++) {
+      out.push("## " + sections[s][0]);
+      var defs = sections[s][1];
+      for (var i = 0; i < defs.length; i++) {
+        var r = refs[defs[i][0]];
+        if (!r) { continue; }
+        var chip = r.chip.textContent ? " [" + r.chip.textContent + "]" : "";
+        out.push(defs[i][1] + ": " + r.text.textContent + chip);
+      }
+      out.push("");
+    }
+    out.push("## LOG");
+    out.push(logLines.join("\n"));
+    return out.join("\n");
+  }
+
+  function copyDiagnostics() {
+    var text = diagnosticsText();
+    function fallback() {
+      try {
+        var ta = document.createElement("textarea");
+        ta.value = text;
+        ta.setAttribute("readonly", "readonly");
+        ta.style.position = "fixed";
+        ta.style.top = "-1000px";
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+        btnCopy.textContent = "Copied";
+      } catch (e) {
+        btnCopy.textContent = "Copy failed — select the log manually";
+      }
+      window.setTimeout(function () { btnCopy.textContent = "Copy diagnostics"; }, 2500);
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function () {
+        btnCopy.textContent = "Copied";
+        window.setTimeout(function () { btnCopy.textContent = "Copy diagnostics"; }, 2500);
+      })["catch"](fallback);
+    } else {
+      fallback();
+    }
+  }
+
+  /* ---------------- wiring ---------------- */
+
+  function onStartClick() {
+    if (recognitionRunning) { return; }
+    clickTime = Date.now();
+    btnStart.disabled = true;
+    btnStart.textContent = "Working…";
+    startStatus.textContent = "Checking microphone permission…";
+    log("CLICK: Start speaking");
+
+    testMicrophone().then(function (ok) {
+      refreshEnv();
+      if (!ok) {
+        startStatus.textContent = "Microphone test failed. Details are in the diagnostics below. Text to speech can still be tested.";
+        set("sr.result", "skipped — microphone test failed", "unknown");
+        finishRecognition();
+        return;
+      }
+      try {
+        testRecognition();
+      } catch (e) {
+        set("sr.result", "unexpected failure", "fail");
+        set("sr.errCode", errName(e));
+        set("sr.errMsg", errMsg(e));
+        log("SR: unexpected failure " + errName(e) + " — " + errMsg(e));
+        finishRecognition();
+      }
+    })["catch"](function (e) {
+      set("mic.result", "unexpected failure", "fail");
+      set("mic.errName", errName(e));
+      set("mic.errMsg", errMsg(e));
+      log("MIC: unexpected failure " + errName(e));
+      finishRecognition();
+    });
+  }
+
+  function init() {
+    logEl = byId("log");
+    btnStart = byId("btnStart");
+    btnSpeak = byId("btnSpeak");
+    btnCopy = byId("btnCopy");
+    btnReset = byId("btnReset");
+    transcriptEl = byId("transcript");
+    startStatus = byId("startStatus");
+    speakStatus = byId("speakStatus");
+
+    makeRows("micRows", MIC_ROWS);
+    makeRows("srRows", SR_ROWS);
+    makeRows("ttsRows", TTS_ROWS);
+    makeRows("envRows", ENV_ROWS);
+
+    resetResults();
+    set("tts.voiceCount", "not loaded yet");
+    log("Page ready.");
+
+    if (btnStart) { btnStart.addEventListener("click", onStartClick); }
+    if (btnSpeak) { btnSpeak.addEventListener("click", doSpeak); }
+    if (btnCopy) { btnCopy.addEventListener("click", copyDiagnostics); }
+    if (btnReset) { btnReset.addEventListener("click", resetResults); }
+
+    // Keep the voice count row honest as the browser fills the list in.
+    try {
+      if (window.speechSynthesis && window.speechSynthesis.addEventListener) {
+        window.speechSynthesis.addEventListener("voiceschanged", function () {
+          var list = [];
+          try { list = window.speechSynthesis.getVoices() || []; } catch (e) { list = []; }
+          set("tts.voiceCount", list.length);
+          log("TTS: voiceschanged — " + list.length + " voice(s)");
+        });
+      }
+    } catch (e) { /* ignore */ }
+
+    window.setInterval(function () { set("env.time", nowStamp()); }, 1000);
+  }
+
+  try {
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", init);
+    } else {
+      init();
+    }
+  } catch (e) {
+    try {
+      var p = document.createElement("p");
+      p.textContent = "Initialization failed: " + (e && e.message ? e.message : e);
+      document.body.appendChild(p);
+    } catch (e2) { /* ignore */ }
+  }
+})();
+</script>
+</body>
+</html>
