@@ -44,7 +44,7 @@ import {
 import {
   callGemini,
   extractModelJson,
-  geminiModel,
+  vocabularyModel,
   redactObject,
   aiString
 } from "./gemini.js";
@@ -1587,6 +1587,9 @@ function summaryLine(summary) {
      vocabulary_enrichment      one word looked up on demand
      vocabulary_free_text_eval  one written sentence judged
 
+   All four run on the vocabulary model role, and the model id is recorded
+   alongside the purpose, so accounting shows exactly which budget was spent.
+
    No Search, no grounding, no tools, no paid-only feature is enabled anywhere.
    Every request is plain generateContent with a response schema. A failure at
    any of these points degrades the feature and never breaks it — the
@@ -1721,7 +1724,7 @@ async function generateSystemWords(env, ownerHash, opts) {
     known.length ? known.join(", ") : "(none yet)"
   ].join("\n");
 
-  const model = geminiModel(env);
+  const model = vocabularyModel(env);
   const upstream = await callGemini({
     env: env,
     model: model,
@@ -1806,7 +1809,7 @@ async function runEnrichment(env, ownerHash, term) {
     };
   }
 
-  const model = geminiModel(env);
+  const model = vocabularyModel(env);
   const upstream = await callGemini({
     env: env,
     model: model,
@@ -1888,7 +1891,7 @@ const CONTEXT_PROMPT = [
  * itself from the exercise kinds that need no model.
  */
 async function generateContextExercises(env, ownerHash, items, topic) {
-  const model = geminiModel(env);
+  const model = vocabularyModel(env);
   const listed = items.map(function (v, i) {
     return [
       (i + 1) + ". term: " + v.english,
@@ -2004,7 +2007,7 @@ async function markWrittenSentence(env, ownerHash, item, sentence) {
     return fallbackWrittenMark(term, sentence, "The AI service is not configured.");
   }
 
-  const model = geminiModel(env);
+  const model = vocabularyModel(env);
   const upstream = await callGemini({
     env: env,
     model: model,

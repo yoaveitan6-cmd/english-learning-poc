@@ -227,6 +227,14 @@ export const SAMPLE_WRITE_EVAL = {
 };
 
 /**
+ * The model id out of a generateContent URL: .../models/<id>:generateContent
+ */
+export function modelFromUrl(url) {
+  const m = /\/models\/([^:]+):generateContent/.exec(String(url));
+  return m ? decodeURIComponent(m[1]) : "";
+}
+
+/**
  * Routes a stubbed Gemini call to a handler chosen by what the prompt asks for,
  * so one stub can serve a whole session flow. Returns the stub handle plus a
  * per-purpose call count, which is how the tests assert that batching actually
@@ -234,6 +242,10 @@ export const SAMPLE_WRITE_EVAL = {
  */
 export function stubGeminiByPurpose(handlers) {
   const counts = { generation: 0, context: 0, enrichment: 0, writeEval: 0, unknown: 0 };
+  /* Which model each purpose was actually sent to. Model routing is a product
+     decision about free-tier budgets, so the tests assert it rather than
+     trusting that the right constant was imported. */
+  const models = {};
   const stub = stubFetch(async (url, init) => {
     const payload = JSON.parse(init.body);
     const system = payload.systemInstruction.parts[0].text;
@@ -246,9 +258,10 @@ export function stubGeminiByPurpose(handlers) {
     else if (/choose new English vocabulary/.test(system)) purpose = "generation";
 
     counts[purpose] = (counts[purpose] || 0) + 1;
+    models[purpose] = modelFromUrl(url);
     const handler = handlers[purpose];
     if (!handler) throw new Error("no stub handler for Gemini purpose: " + purpose);
     return handler(payload, user);
   });
-  return { stub, counts, restore: () => stub.restore(), calls: stub.calls };
+  return { stub, counts, models, restore: () => stub.restore(), calls: stub.calls };
 }

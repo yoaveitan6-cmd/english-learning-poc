@@ -16,15 +16,57 @@
  *   - it never decides anything pedagogical. Callers own prompts and schemas.
  */
 
-export const GEMINI_MODEL = "gemini-3.8-flash";
+/**
+ * Model routing.
+ *
+ * Two roles, because the two kinds of work have very different volumes and the
+ * free tier's per-day request limits differ by an order of magnitude:
+ *
+ *   correction  gemini-3.8-flash        ~20 requests/day on the free tier.
+ *               One sentence at a time, entirely learner-initiated, so a
+ *               handful of calls a day. /ai/correct stays here.
+ *
+ *   vocabulary  gemini-3.1-flash-lite   ~500 requests/day on the free tier.
+ *               The Vocabulary slice's four purposes. Even batched, a daily
+ *               session plus manual adds is several calls a day, every day —
+ *               and it shares nothing with the correction budget. Twenty a day
+ *               is not a budget a daily lesson can live inside.
+ *
+ * Both are plain generateContent with a response schema; Flash-Lite is
+ * documented as supporting structured outputs, which every prompt here relies
+ * on. Neither is a paid-only model and nothing about billing changes.
+ *
+ * The env overrides exist so the model can be moved without a code change if a
+ * name is retired. Neither is set in wrangler.toml, so the defaults apply.
+ */
+export const MODELS = {
+  correction: "gemini-3.8-flash",
+  vocabulary: "gemini-3.1-flash-lite"
+};
+
+export const GEMINI_MODEL = MODELS.correction;
+export const GEMINI_VOCAB_MODEL = MODELS.vocabulary;
+
 export const GEMINI_TIMEOUT_MS = 30000;   // overall deadline for all attempts together
 export const GEMINI_MAX_ATTEMPTS = 3;     // only a 503 "high demand" is retried
 export const GEMINI_RETRY_DELAYS_MS = [700, 1800];
 export const MAX_AI_FIELD_LEN = 1000;
 
+/** The model for one role. Callers name the role; only this file names models. */
+export function modelFor(env, role) {
+  const override = role === "vocabulary" ? env.GEMINI_VOCAB_MODEL : env.GEMINI_MODEL;
+  const m = typeof override === "string" ? override.trim() : "";
+  return m || MODELS[role] || MODELS.correction;
+}
+
+/** The correction role. Kept as its own name because /ai/correct reads it. */
 export function geminiModel(env) {
-  const m = typeof env.GEMINI_MODEL === "string" ? env.GEMINI_MODEL.trim() : "";
-  return m || GEMINI_MODEL;
+  return modelFor(env, "correction");
+}
+
+/** The vocabulary role — every /vocab/ purpose routes through here. */
+export function vocabularyModel(env) {
+  return modelFor(env, "vocabulary");
 }
 
 /**

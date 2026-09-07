@@ -59,6 +59,11 @@
  * only, what the /vocab/ routes use it for.
  *
  * AI model (added stage 2):
+ *   /ai/correct runs on the CORRECTION model role (src/gemini.js). It stays on
+ *   the stronger model deliberately: it is low-volume and learner-initiated, so
+ *   it fits inside that model's small per-day free-tier budget, which the
+ *   high-volume vocabulary purposes would otherwise exhaust in one session.
+ *
  *   POST /ai/correct is authenticated with the SAME X-Sync-Key mechanism, so a
  *   random visitor to the public GitHub Pages code cannot spend the Gemini free
  *   tier. GEMINI_API_KEY is a Worker secret, read only server-side, sent to

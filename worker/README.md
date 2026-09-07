@@ -228,7 +228,24 @@ resulting `owner_hash` is used for one thing only: attributing the call counter.
 
 ### Model and cost posture
 
-* Model: `gemini-3.8-flash` (override with a `GEMINI_MODEL` var if ever needed).
+**Model routing.** Two roles, because the two kinds of work differ in volume by
+more than an order of magnitude and the free tier's per-day request limits
+differ to match. `src/gemini.js` is the only file that names a model.
+
+| Role | Model | Free-tier RPD | Used by |
+|---|---|---|---|
+| `correction` | `gemini-3.8-flash` | ~20 | `/ai/correct` |
+| `vocabulary` | `gemini-3.1-flash-lite` | ~500 | `vocabulary_generation`, `vocabulary_enrichment`, `vocabulary_exercises`, `vocabulary_free_text_eval` |
+
+Twenty requests a day is a workable budget for a hand-triggered "check this
+sentence" button. It is not a budget a daily vocabulary lesson can live inside —
+one session plus a couple of manual adds would spend a quarter of it — so the
+Vocabulary purposes route to the Flash-Lite model, which documents support for
+the structured outputs every prompt here depends on. Both roles can be moved by
+configuration (`GEMINI_MODEL`, `GEMINI_VOCAB_MODEL`) without a code change;
+neither is set, so the defaults apply. Tests assert the routing at the wire, in
+the request URL, and assert that the two roles never collapse into one model.
+
 * Plain `generateContent` text generation with `responseSchema` structured output.
 * **No** grounding, Google Search, Maps, URL context, code execution, or file tools —
   nothing that would leave the free tier or require billing.
@@ -482,7 +499,7 @@ every file in `migrations/`. That means a mistake in a migration, a missing
 column, or SQL that does not mean what it looks like fails the tests rather than
 production.
 
-Coverage: sync CRUD, CORS, input validation, structured-output parsing,
+Coverage: model routing per purpose, sync CRUD, CORS, input validation, structured-output parsing,
 malformed model output, 429 / upstream failures, timeouts; provisional and
 existing learner state, owner isolation on every route, deterministic planning,
 plan persistence and stability across requests and devices, Quick/Standard/Full

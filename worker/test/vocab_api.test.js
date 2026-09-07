@@ -28,11 +28,17 @@ import {
   generatedWord,
   contextBatch,
   SAMPLE_WRITE_EVAL,
+  SAMPLE_FEEDBACK,
+  modelFromUrl,
   TEST_GEMINI_KEY,
   TEST_ORIGIN,
   TEST_SYNC_KEY
 } from "./helpers.js";
 import { msToDateKey } from "../src/planner.js";
+import { MODELS } from "../src/gemini.js";
+
+const VOCAB_MODEL = MODELS.vocabulary;
+const CORRECTION_MODEL = MODELS.correction;
 
 const OTHER_KEY = "z".repeat(40);
 
@@ -1446,4 +1452,105 @@ test("an exhausted quota with an empty library says so, instead of blaming the l
     },
     { generation: () => jsonResponse(429, { error: { status: "RESOURCE_EXHAUSTED", message: "quota" } }) }
   );
+});
+
+/* ---------------- model routing ---------------- */
+
+/**
+ * Which model each purpose runs on is a product decision about free-tier
+ * budgets, not an implementation detail: the correction model allows ~20
+ * requests a day and the vocabulary model ~500, so a vocabulary purpose that
+ * quietly drifted onto the correction model would exhaust a day's budget in
+ * one session. These tests pin the routing at the wire, in the request URL,
+ * rather than trusting that the right constant was imported.
+ */
+test("every vocabulary purpose is sent to the vocabulary model", async () => {
+  const env = makeEnv();
+  await withNoNetwork(async () => {
+    for (const [term, he] of [["deadline", "מועד"], ["put off", "לדחות"], ["call off", "לבטל"], ["look into", "לבדוק"]]) {
+      await call(req("POST", "/vocab/items", { body: { term, hebrew: he } }), env);
+    }
+    // Established words, so the session reaches for context and written sentences.
+    env.DB.exec("UPDATE vocabulary_state SET mastery='mastered', successes=9, dueAt=0, lastPracticedAt=1");
+  });
+
+  await withGemini(async (g) => {
+    await makePlan(env);
+    const s = (await call(req("POST", "/vocab/session", { body: {} }), env)).body.session;
+
+    const write = s.exercises.find((e) => e.kind === "write_sentence");
+    assert.ok(write, "expected a written-sentence exercise: " + s.exercises.map((e) => e.kind));
+    await call(
+      req("POST", "/vocab/session/answer", { body: { exerciseId: write.exerciseId, answer: "I finally figured it out." } }),
+      env
+    );
+    await call(req("POST", "/vocab/enrich", { body: { term: "bring up" } }), env);
+
+    assert.equal(g.models.generation, VOCAB_MODEL, "vocabulary_generation");
+    assert.equal(g.models.context, VOCAB_MODEL, "vocabulary_exercises");
+    assert.equal(g.models.writeEval, VOCAB_MODEL, "vocabulary_free_text_eval");
+    assert.equal(g.models.enrichment, VOCAB_MODEL, "vocabulary_enrichment");
+
+    // Every request that left the Worker, without exception.
+    for (const c of g.calls) {
+      assert.equal(modelFromUrl(c.url), VOCAB_MODEL, "a vocabulary request went to " + c.url);
+    }
+  });
+});
+
+test("the correction endpoint stays on the correction model", async () => {
+  const env = makeEnv();
+  const stub = stubFetch(() => jsonResponse(200, geminiOk(SAMPLE_FEEDBACK)));
+  try {
+    const r = await call(req("POST", "/ai/correct", { body: { sentence: "Yesterday I go to the store." } }), env);
+    assert.equal(r.res.status, 200);
+    assert.equal(r.body.model, CORRECTION_MODEL);
+    assert.equal(modelFromUrl(stub.calls[0].url), CORRECTION_MODEL);
+    assert.notEqual(CORRECTION_MODEL, VOCAB_MODEL, "the two roles must not collapse into one model");
+  } finally {
+    stub.restore();
+  }
+});
+
+test("AI usage accounting attributes each purpose to the model it actually used", async () => {
+  const env = makeEnv();
+  const stub = stubFetch(() => jsonResponse(200, geminiOk(SAMPLE_FEEDBACK)));
+  try {
+    await call(req("POST", "/ai/correct", { body: { sentence: "Yesterday I go to the store." } }), env);
+  } finally {
+    stub.restore();
+  }
+  await withGemini(async () => {
+    await makePlan(env);
+    await call(req("POST", "/vocab/session", { body: {} }), env);
+  });
+
+  await withNoNetwork(async () => {
+    const usage = (await call(req("GET", "/ai/usage"), env)).body.usage;
+    const byPurpose = {};
+    for (const u of usage) byPurpose[u.purpose] = u.model;
+    assert.equal(byPurpose.correct, CORRECTION_MODEL);
+    assert.equal(byPurpose.vocabulary_generation, VOCAB_MODEL);
+    // The two budgets have to be separable in the accounting, or "which quota
+    // did today spend" has no answer.
+    assert.equal(new Set(usage.map((u) => u.model)).size, 2, JSON.stringify(usage));
+  });
+});
+
+test("the vocabulary model can be moved by configuration without a code change", async () => {
+  const env = makeEnv({ GEMINI_VOCAB_MODEL: "gemini-3.5-flash-lite" });
+  await withGemini(async (g) => {
+    await makePlan(env);
+    await call(req("POST", "/vocab/session", { body: {} }), env);
+    assert.equal(g.models.generation, "gemini-3.5-flash-lite");
+  });
+
+  // ...and moving it must not drag the correction endpoint along with it.
+  const stub = stubFetch(() => jsonResponse(200, geminiOk(SAMPLE_FEEDBACK)));
+  try {
+    const r = await call(req("POST", "/ai/correct", { body: { sentence: "Yesterday I go to the store." } }), env);
+    assert.equal(r.body.model, CORRECTION_MODEL);
+  } finally {
+    stub.restore();
+  }
 });
