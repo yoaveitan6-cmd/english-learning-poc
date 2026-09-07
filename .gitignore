@@ -1,0 +1,45 @@
+# ---------------------------------------------------------------
+# Nothing containing a credential, secret, or account-linked value
+# may ever reach this public repository.
+# ---------------------------------------------------------------
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-error.log*
+package-lock.json
+
+# Cloudflare Wrangler — local build state and caches
+.wrangler/
+worker/.wrangler/
+
+# Cloudflare config holding account-linked identifiers (database_id).
+# The public template worker/wrangler.toml.example IS tracked.
+wrangler.toml
+wrangler.json
+wrangler.jsonc
+worker/wrangler.toml
+worker/wrangler.json
+worker/wrangler.jsonc
+
+# Local secret values for `wrangler dev` (SYNC_PEPPER etc.). NEVER commit.
+.dev.vars
+.dev.vars.*
+worker/.dev.vars
+worker/.dev.vars.*
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Anything key-shaped
+*.pem
+*.key
+*.p12
+*.pfx
+secrets.*
+.cloudflare/
+
+# macOS
+.DS_Store

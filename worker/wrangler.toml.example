@@ -1,0 +1,28 @@
+# Copy this file to worker/wrangler.toml and fill in database_id.
+#
+#   cp worker/wrangler.toml.example worker/wrangler.toml
+#
+# worker/wrangler.toml is gitignored on purpose: it holds account-linked
+# identifiers. This .example file is the version that lives in the public repo.
+#
+# NOTE: no secret belongs in this file. SYNC_PEPPER is set with
+#   npx wrangler secret put SYNC_PEPPER
+# which stores it in Cloudflare, not in the repository.
+
+name = "english-sync"
+main = "src/worker.js"
+compatibility_date = "2025-09-01"
+workers_dev = true
+
+[observability]
+enabled = true
+
+[vars]
+# Comma-separated list of browser origins allowed to call this Worker.
+# Origin only: scheme + host + optional port. No trailing slash, no path.
+ALLOWED_ORIGINS = "https://yoaveitan6-cmd.github.io,http://localhost:8000,http://127.0.0.1:8000"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "english_poc"
+database_id = "PASTE_THE_DATABASE_ID_FROM_wrangler_d1_create_HERE"

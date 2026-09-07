@@ -145,6 +145,66 @@
   }
   .note { font-size: 13px; color: var(--muted); margin: 10px 0 0; }
   .stack > * + * { margin-top: 10px; }
+
+  /* ---- cloud sync test (added for the storage/sync POC) ---- */
+  input[type="text"], input[type="url"] {
+    font: inherit;
+    width: 100%;
+    padding: 12px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: #fff;
+    color: var(--ink);
+    -webkit-appearance: none;
+    appearance: none;
+  }
+  input:focus-visible { outline: 3px solid #9dbdf5; outline-offset: 1px; }
+  .divider { border: 0; border-top: 1px solid var(--line); margin: 4px 0; }
+  button.mini {
+    width: auto;
+    min-height: 34px;
+    padding: 5px 12px;
+    font-size: 13px;
+    font-weight: 500;
+    background: var(--card);
+    color: var(--fail-ink);
+    border-color: var(--line);
+    flex: 0 0 auto;
+  }
+  #syncError {
+    font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    background: var(--fail-bg);
+    color: var(--fail-ink);
+    border: 1px solid #f3c9c9;
+    border-radius: 10px;
+    padding: 10px;
+    max-height: 240px;
+    overflow-y: auto;
+    margin: 0;
+  }
+  #syncError[hidden] { display: none; }
+  .vocab-item {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .vocab-item:last-child { border-bottom: 0; }
+  .vocab-main { min-width: 0; flex: 1 1 auto; }
+  .vocab-en { font-weight: 600; overflow-wrap: anywhere; }
+  .vocab-he { font-size: 15px; overflow-wrap: anywhere; }
+  .vocab-meta {
+    font-size: 11px;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+    overflow-wrap: anywhere;
+    margin-top: 2px;
+  }
+  .vocab-empty { color: var(--muted); font-size: 14px; padding: 6px 0; }
 </style>
 </head>
 <body>
@@ -166,6 +226,67 @@
   <div class="card">
     <button id="btnSpeak" type="button">Speak</button>
     <p class="status" id="speakStatus">Idle. Nothing is spoken until you press Speak.</p>
+  </div>
+
+  <div class="card stack" id="syncCard">
+    <h2>Cloud sync test (Cloudflare Workers + D1)</h2>
+    <p class="note" style="margin-top:0">
+      Storage and cross-device sync check only. This section does not touch the microphone
+      or speech tests above. The list at the bottom is always fetched from the server —
+      it is never read from this browser's storage.
+    </p>
+
+    <hr class="divider">
+
+    <div>
+      <label for="syncApi">Worker URL — public configuration, pre-filled. Editable for debugging.</label>
+      <input id="syncApi" type="url" inputmode="url" autocomplete="off" autocapitalize="off"
+             autocorrect="off" spellcheck="false"
+             placeholder="https://english-sync.YOUR-SUBDOMAIN.workers.dev">
+    </div>
+
+    <div>
+      <label for="syncKey">Private sync key — at least 20 characters, same on every device</label>
+      <input id="syncKey" type="text" autocomplete="off" autocapitalize="off"
+             autocorrect="off" spellcheck="false"
+             placeholder="Paste your key, or press Generate below">
+    </div>
+
+    <button id="btnGenKey" class="secondary" type="button">Generate a new strong key</button>
+    <button id="btnSaveKey" type="button">Save URL and key on this device</button>
+    <button id="btnForgetKey" class="secondary" type="button">Forget them on this device</button>
+    <p class="note">
+      The Worker URL above is public and safe to publish. The <strong>sync key is not</strong>:
+      it is stored only in this browser's localStorage and sent to the Worker in the
+      <code>X-Sync-Key</code> header, which hashes it and stores only the hash. It is never
+      committed to GitHub. Anyone holding this key can read your words, so keep it private.
+      Use the same key on every device you want to sync.
+    </p>
+
+    <hr class="divider">
+
+    <div>
+      <label for="wordEn">English word</label>
+      <input id="wordEn" type="text" autocapitalize="none" autocorrect="off"
+             spellcheck="false" placeholder="apple">
+    </div>
+
+    <div>
+      <label for="wordHe">Hebrew translation</label>
+      <input id="wordHe" type="text" dir="auto" autocapitalize="none" autocorrect="off"
+             spellcheck="false" placeholder="תפוח">
+    </div>
+
+    <button id="btnSaveWord" type="button">Save word to cloud</button>
+    <button id="btnRefresh" class="secondary" type="button">Refresh / Sync from cloud</button>
+
+    <p class="status" id="syncStatus">Loading…</p>
+    <pre id="syncError" hidden>—</pre>
+
+    <hr class="divider">
+
+    <h2>Cloud vocabulary <span id="vocabCount" class="chip hide"></span></h2>
+    <div id="vocabList"></div>
   </div>
 
   <div class="card">
@@ -882,6 +1003,461 @@
       p.textContent = "Initialization failed: " + (e && e.message ? e.message : e);
       document.body.appendChild(p);
     } catch (e2) { /* ignore */ }
+  }
+})();
+</script>
+
+<script>
+/* ------------------------------------------------------------------
+   Cloud sync test — Cloudflare Workers + D1.
+
+   Deliberately kept in its own IIFE, separate from the speech tests
+   above, so the microphone / SpeechRecognition / TTS code is untouched.
+
+   Only two things are stored in this browser: the Worker URL and the
+   private sync key. The vocabulary itself is never cached locally —
+   D1 is the single source of truth and the list below is always what
+   the last GET /vocabulary returned.
+   ------------------------------------------------------------------ */
+(function () {
+  "use strict";
+
+  var LS_API = "elp.sync.apiBase";
+  var LS_KEY = "elp.sync.key";
+  var MIN_KEY_LEN = 20;
+
+  /* Public configuration, not a secret: this only identifies which Worker to
+     talk to. Reading it grants nobody access — every /vocabulary request still
+     requires the private sync key, which lives only in each browser. The field
+     stays editable so a different deployment can be pointed at for debugging. */
+  var DEFAULT_API_BASE = "https://english-sync.yoaveitan-english.workers.dev";
+
+  var apiEl, keyEl, enEl, heEl, statusEl, errorEl, listEl, countEl;
+  var btnGen, btnSave, btnForget, btnSaveWord, btnRefresh;
+  var busy = false;
+
+  function byId(id) { return document.getElementById(id); }
+
+  function status(msg) {
+    if (statusEl) { statusEl.textContent = msg; }
+  }
+
+  function clearError() {
+    if (!errorEl) { return; }
+    errorEl.textContent = "—";
+    errorEl.hidden = true;
+  }
+
+  /* Exact error display: operation, request, HTTP status, raw response body. */
+  function showError(operation, detail) {
+    if (!errorEl) { return; }
+    var lines = ["ERROR during: " + operation];
+    var i;
+    for (i = 0; i < detail.length; i++) {
+      lines.push(detail[i]);
+    }
+    errorEl.textContent = lines.join("\n");
+    errorEl.hidden = false;
+  }
+
+  function errText(e) {
+    try {
+      var name = (e && e.name) ? String(e.name) : "Error";
+      var msg = (e && e.message) ? String(e.message) : String(e);
+      return name + ": " + msg;
+    } catch (x) {
+      return "(unreadable error)";
+    }
+  }
+
+  function readStore(k) {
+    try { return window.localStorage.getItem(k) || ""; } catch (e) { return ""; }
+  }
+
+  function writeStore(k, v) {
+    try { window.localStorage.setItem(k, v); return true; } catch (e) { return false; }
+  }
+
+  function removeStore(k) {
+    try { window.localStorage.removeItem(k); } catch (e) { /* ignore */ }
+  }
+
+  function normalizeBase(v) {
+    return String(v || "").trim().replace(/\/+$/, "");
+  }
+
+  function randomId() {
+    try {
+      if (window.crypto && typeof window.crypto.randomUUID === "function") {
+        return window.crypto.randomUUID();
+      }
+    } catch (e) { /* fall through */ }
+    var bytes = new Uint8Array(16);
+    try {
+      window.crypto.getRandomValues(bytes);
+    } catch (e) {
+      for (var j = 0; j < bytes.length; j++) {
+        bytes[j] = Math.floor(Math.random() * 256);
+      }
+    }
+    var out = "";
+    for (var i = 0; i < bytes.length; i++) {
+      out += ("0" + bytes[i].toString(16)).slice(-2);
+    }
+    return out;
+  }
+
+  /* 32 random bytes rendered as base64url — about 256 bits of entropy. */
+  function generateKey() {
+    var bytes = new Uint8Array(32);
+    window.crypto.getRandomValues(bytes);
+    var bin = "";
+    for (var i = 0; i < bytes.length; i++) {
+      bin += String.fromCharCode(bytes[i]);
+    }
+    return window.btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  }
+
+  function config() {
+    return { base: normalizeBase(apiEl.value), key: String(keyEl.value || "").trim() };
+  }
+
+  function configProblem(cfg) {
+    if (!cfg.base) { return "Worker URL is empty. Paste your workers.dev URL and press Save."; }
+    if (!/^https?:\/\//i.test(cfg.base)) { return "Worker URL must start with https://"; }
+    if (!cfg.key) { return "Sync key is empty. Press Generate, then Save."; }
+    if (cfg.key.length < MIN_KEY_LEN) {
+      return "Sync key is only " + cfg.key.length + " characters. At least " + MIN_KEY_LEN + " are required.";
+    }
+    return null;
+  }
+
+  function setBusy(v) {
+    busy = v;
+    btnSaveWord.disabled = v;
+    btnRefresh.disabled = v;
+  }
+
+  /* One place for every network call, so error reporting is identical everywhere. */
+  function api(operation, method, path, bodyObj) {
+    var cfg = config();
+    var problem = configProblem(cfg);
+    if (problem) {
+      showError(operation, ["Configuration problem: " + problem]);
+      status("Not configured.");
+      return Promise.reject(new Error(problem));
+    }
+
+    var url = cfg.base + path;
+    var init = {
+      method: method,
+      headers: { "X-Sync-Key": cfg.key },
+      mode: "cors",
+      cache: "no-store",
+      credentials: "omit"
+    };
+    if (bodyObj !== undefined && bodyObj !== null) {
+      init.headers["Content-Type"] = "application/json";
+      init.body = JSON.stringify(bodyObj);
+    }
+
+    var started = Date.now();
+
+    return fetch(url, init).then(function (res) {
+      return res.text().then(function (text) {
+        var elapsed = Date.now() - started;
+        var parsed = null;
+        try { parsed = JSON.parse(text); } catch (e) { parsed = null; }
+
+        if (!res.ok) {
+          showError(operation, [
+            method + " " + url,
+            "HTTP status: " + res.status + " " + (res.statusText || ""),
+            "Round trip: " + elapsed + " ms",
+            "Response body:",
+            text || "(empty body)"
+          ]);
+          var e2 = new Error("HTTP " + res.status);
+          e2.handled = true;
+          throw e2;
+        }
+
+        if (parsed === null) {
+          showError(operation, [
+            method + " " + url,
+            "HTTP status: " + res.status,
+            "Response was not valid JSON. Raw body:",
+            text || "(empty body)"
+          ]);
+          var e3 = new Error("Response was not JSON");
+          e3.handled = true;
+          throw e3;
+        }
+
+        clearError();
+        return parsed;
+      });
+    }, function (networkErr) {
+      // fetch() rejects for DNS failures, offline, and blocked CORS preflights.
+      showError(operation, [
+        method + " " + url,
+        "The request never completed — no HTTP status was received.",
+        errText(networkErr),
+        "",
+        "Most likely one of:",
+        "  1. The Worker URL is wrong or the Worker is not deployed.",
+        "  2. This page's origin (" + window.location.origin + ") is not in",
+        "     ALLOWED_ORIGINS in wrangler.toml, so the CORS preflight was blocked.",
+        "  3. This device is offline."
+      ]);
+      var e4 = new Error("Network / CORS failure");
+      e4.handled = true;
+      throw e4;
+    });
+  }
+
+  function fmtTime(ms) {
+    var n = Number(ms);
+    if (!isFinite(n) || n <= 0) { return String(ms); }
+    try { return new Date(n).toLocaleString(); } catch (e) { return String(n); }
+  }
+
+  /* Renders straight from the server response. Nothing is cached. */
+  function renderList(records) {
+    listEl.textContent = "";
+
+    if (countEl) {
+      countEl.textContent = records.length + " on server";
+      countEl.className = "chip";
+    }
+
+    if (!records.length) {
+      var empty = document.createElement("p");
+      empty.className = "vocab-empty";
+      empty.textContent = "No records on the server for this sync key yet.";
+      listEl.appendChild(empty);
+      return;
+    }
+
+    for (var i = 0; i < records.length; i++) {
+      (function (rec) {
+        var item = document.createElement("div");
+        item.className = "vocab-item";
+
+        var main = document.createElement("div");
+        main.className = "vocab-main";
+
+        var en = document.createElement("div");
+        en.className = "vocab-en";
+        en.textContent = rec.english;
+
+        var he = document.createElement("div");
+        he.className = "vocab-he";
+        he.setAttribute("dir", "auto");
+        he.textContent = rec.hebrew || "—";
+
+        var meta = document.createElement("div");
+        meta.className = "vocab-meta";
+        meta.textContent =
+          "id " + rec.id +
+          " · created " + fmtTime(rec.createdAt) +
+          " · updated " + fmtTime(rec.updatedAt);
+
+        main.appendChild(en);
+        main.appendChild(he);
+        main.appendChild(meta);
+
+        var del = document.createElement("button");
+        del.type = "button";
+        del.className = "secondary mini";
+        del.textContent = "Delete";
+        del.addEventListener("click", function () { deleteRecord(rec); });
+
+        item.appendChild(main);
+        item.appendChild(del);
+        listEl.appendChild(item);
+      })(records[i]);
+    }
+  }
+
+  /* ---------------- actions ---------------- */
+
+  function saveConfig() {
+    var cfg = config();
+    var problem = configProblem(cfg);
+    if (problem) {
+      showError("saving Worker URL and sync key", ["Configuration problem: " + problem]);
+      status("Nothing saved.");
+      return;
+    }
+    apiEl.value = cfg.base;
+    var okA = writeStore(LS_API, cfg.base);
+    var okB = writeStore(LS_KEY, cfg.key);
+    if (!okA || !okB) {
+      showError("saving Worker URL and sync key", [
+        "localStorage rejected the write.",
+        "Private browsing or blocked site data will do this."
+      ]);
+      status("Could not save on this device.");
+      return;
+    }
+    clearError();
+    status("Saved on this device. Now press Refresh / Sync from cloud.");
+    refresh();
+  }
+
+  function forgetConfig() {
+    removeStore(LS_API);
+    removeStore(LS_KEY);
+    keyEl.value = "";
+    apiEl.value = DEFAULT_API_BASE;
+    listEl.textContent = "";
+    if (countEl) { countEl.className = "chip hide"; }
+    clearError();
+    status("Worker URL and sync key removed from this device. Your cloud data was not touched.");
+  }
+
+  function refresh() {
+    if (busy) { return; }
+    setBusy(true);
+    status("Loading from Cloudflare D1…");
+    api("GET /vocabulary", "GET", "/vocabulary", null).then(function (data) {
+      var records = (data && data.records) ? data.records : [];
+      renderList(records);
+      status("Synced. " + records.length + " record(s) on the server at " + new Date().toLocaleTimeString() + ".");
+    })["catch"](function (e) {
+      if (!e || !e.handled) {
+        showError("GET /vocabulary", [errText(e)]);
+      }
+      status("Sync failed. See the error box above.");
+    })["then"](function () { setBusy(false); }, function () { setBusy(false); });
+  }
+
+  function saveWord() {
+    if (busy) { return; }
+    var english = String(enEl.value || "").trim();
+    var hebrew = String(heEl.value || "").trim();
+
+    if (!english) {
+      showError("POST /vocabulary", ["The English word is empty."]);
+      status("Nothing saved.");
+      enEl.focus();
+      return;
+    }
+
+    var now = Date.now();
+    // The id is generated here so retrying a failed save cannot create a duplicate.
+    var payload = { id: randomId(), english: english, hebrew: hebrew, createdAt: now, updatedAt: now };
+
+    setBusy(true);
+    status("Saving \"" + english + "\" to Cloudflare D1…");
+
+    api("POST /vocabulary", "POST", "/vocabulary", payload).then(function (data) {
+      if (data && data.applied === false) {
+        status("Server kept a newer version of this record (" + data.reason + ").");
+      } else {
+        status("Saved. Open this page on your other device and press Refresh / Sync.");
+        enEl.value = "";
+        heEl.value = "";
+      }
+      return api("GET /vocabulary", "GET", "/vocabulary", null).then(function (list) {
+        renderList((list && list.records) ? list.records : []);
+      });
+    })["catch"](function (e) {
+      if (!e || !e.handled) {
+        showError("POST /vocabulary", [errText(e)]);
+      }
+      status("Save failed. See the error box above.");
+    })["then"](function () { setBusy(false); }, function () { setBusy(false); });
+  }
+
+  function deleteRecord(rec) {
+    if (busy) { return; }
+    var ok = true;
+    try {
+      ok = window.confirm("Delete \"" + rec.english + "\" from the cloud on every device?");
+    } catch (e) { ok = true; }
+    if (!ok) { return; }
+
+    setBusy(true);
+    status("Deleting \"" + rec.english + "\"…");
+
+    api("DELETE /vocabulary/" + rec.id, "DELETE", "/vocabulary/" + encodeURIComponent(rec.id), null)
+      .then(function (data) {
+        if (data && data.deleted === 0) {
+          status("That record was already gone on the server.");
+        } else {
+          status("Deleted from the cloud.");
+        }
+        return api("GET /vocabulary", "GET", "/vocabulary", null).then(function (list) {
+          renderList((list && list.records) ? list.records : []);
+        });
+      })["catch"](function (e) {
+        if (!e || !e.handled) {
+          showError("DELETE /vocabulary/" + rec.id, [errText(e)]);
+        }
+        status("Delete failed. See the error box above.");
+      })["then"](function () { setBusy(false); }, function () { setBusy(false); });
+  }
+
+  /* ---------------- init ---------------- */
+
+  function init() {
+    apiEl = byId("syncApi");
+    keyEl = byId("syncKey");
+    enEl = byId("wordEn");
+    heEl = byId("wordHe");
+    statusEl = byId("syncStatus");
+    errorEl = byId("syncError");
+    listEl = byId("vocabList");
+    countEl = byId("vocabCount");
+    btnGen = byId("btnGenKey");
+    btnSave = byId("btnSaveKey");
+    btnForget = byId("btnForgetKey");
+    btnSaveWord = byId("btnSaveWord");
+    btnRefresh = byId("btnRefresh");
+
+    if (!apiEl || !keyEl || !listEl) { return; }
+
+    clearError();
+
+    btnGen.addEventListener("click", function () {
+      try {
+        keyEl.value = generateKey();
+        clearError();
+        status("New key generated. Press Save, then enter the SAME key on your other device.");
+      } catch (e) {
+        showError("generating a sync key", [errText(e)]);
+      }
+    });
+    btnSave.addEventListener("click", saveConfig);
+    btnForget.addEventListener("click", forgetConfig);
+    btnSaveWord.addEventListener("click", saveWord);
+    btnRefresh.addEventListener("click", refresh);
+
+    var savedApi = readStore(LS_API);
+    var savedKey = readStore(LS_KEY);
+    apiEl.value = savedApi || DEFAULT_API_BASE;
+    if (savedKey) { keyEl.value = savedKey; }
+
+    if (savedKey) {
+      status("Sync key loaded from this device. Fetching from Cloudflare D1…");
+      refresh();
+    } else {
+      status("Worker URL is pre-filled. Enter your private sync key — or press Generate "
+             + "if this is your first device — then press Save.");
+    }
+  }
+
+  try {
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", init);
+    } else {
+      init();
+    }
+  } catch (e) {
+    /* The speech tests above must keep working even if this section fails. */
+    try { window.console && window.console.error && window.console.error(e); } catch (e2) { /* ignore */ }
   }
 })();
 </script>
