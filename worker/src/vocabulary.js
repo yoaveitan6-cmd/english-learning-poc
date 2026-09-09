@@ -284,43 +284,387 @@ export function isNearMiss(a, b) {
   return true;
 }
 
-/* ---------------- blanking a word out of its example ---------------- */
+/* ---------------- finding a phrase inside a sentence ---------------- */
 
 /**
- * Removes the term from its example sentence and leaves a blank.
+ * Slot words a dictionary entry uses to mark where an object goes.
+ * "keep someone in the loop" is ONE expression with a slot in it, not four
+ * words to be matched literally — no real sentence contains "someone".
+ */
+const PLACEHOLDER_WORDS = new Set([
+  "someone", "somebody", "something", "oneself", "sb", "sth", "one",
+  "someone's", "somebody's", "something's", "one's", "sb's", "sth's"
+]);
+
+/**
+ * Forms of `be`. These carry grammar, not vocabulary: in "be strapped for
+ * cash" the thing worth learning is "strapped for cash", and the copula turns
+ * up as am/is/are/was/were or as a contraction glued to the subject. So `be`
+ * is matched — otherwise the phrase would not be found at all — but it is
+ * never blanked, because "I___ a bit ___" is not a question anyone can read.
+ */
+const BE_WORDS = new Set(["be", "am", "is", "are", "was", "were", "been", "being"]);
+
+/**
+ * Irregular past and participle forms for the verbs that actually head English
+ * phrasal verbs and expressions.
  *
- * Matching is done on word boundaries and tolerates the simple inflections a
- * real example sentence uses — "figure out" appearing as "figured out",
- * "figuring out". If the term genuinely is not in the sentence, this returns
- * null and the caller falls back to a kind that does not need one, rather than
- * showing the learner a broken question.
+ * Suffix rules alone find "figured out" but not "kept me in the loop" or "took
+ * it for granted" — and irregular verbs head a large share of exactly the
+ * expressions this product is told to teach. A fixed lookup is not a parser
+ * and never guesses: a verb absent from this table simply falls back to the
+ * suffix rule, which is what happened to every verb before it existed.
+ */
+const IRREGULAR_HEADS = {
+  be: ["was", "were", "been", "being", "am", "is", "are"],
+  blow: ["blew", "blown"],
+  break: ["broke", "broken"],
+  bring: ["brought"],
+  build: ["built"],
+  buy: ["bought"],
+  catch: ["caught"],
+  come: ["came"],
+  cut: ["cut"],
+  do: ["did", "done", "does"],
+  draw: ["drew", "drawn"],
+  drive: ["drove", "driven"],
+  fall: ["fell", "fallen"],
+  feel: ["felt"],
+  find: ["found"],
+  get: ["got", "gotten"],
+  give: ["gave", "given"],
+  go: ["went", "gone", "goes"],
+  grow: ["grew", "grown"],
+  hang: ["hung"],
+  have: ["had", "has"],
+  hit: ["hit"],
+  hold: ["held"],
+  keep: ["kept"],
+  know: ["knew", "known"],
+  lay: ["laid"],
+  lead: ["led"],
+  leave: ["left"],
+  let: ["let"],
+  lose: ["lost"],
+  make: ["made"],
+  meet: ["met"],
+  pay: ["paid"],
+  put: ["put"],
+  read: ["read"],
+  ride: ["rode", "ridden"],
+  run: ["ran"],
+  say: ["said"],
+  see: ["saw", "seen"],
+  sell: ["sold"],
+  send: ["sent"],
+  set: ["set"],
+  shut: ["shut"],
+  sit: ["sat"],
+  speak: ["spoke", "spoken"],
+  spend: ["spent"],
+  stand: ["stood"],
+  take: ["took", "taken"],
+  teach: ["taught"],
+  tell: ["told"],
+  think: ["thought"],
+  throw: ["threw", "thrown"],
+  wear: ["wore", "worn"],
+  win: ["won"],
+  write: ["wrote", "written"]
+};
+
+/** The most words that may sit inside a separated expression. Three covers
+    "keep me in the loop" and "take our health for granted" without letting a
+    match wander across half a sentence. */
+export const MAX_GAP_WORDS = 3;
+
+export const BLANK = "_____";
+
+const WORD_SRC = "[\\p{L}\\p{N}'’-]+";
+/* Word forms need a boundary in front; the contractions deliberately do not,
+   because the apostrophe in "I'm" follows a letter. */
+const BE_SRC =
+  "(?:(?<![\\p{L}\\p{N}])(?:am|is|are|was|were|be|been|being)(?![\\p{L}\\p{N}])" +
+  "|['’](?:m|re|s)(?![\\p{L}\\p{N}]))";
+
+function escapeRe(s) {
+  return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * How one word of the expression may appear. Only the head inflects — the tail
+ * of an expression is fixed — and an irregular head offers its real forms
+ * alongside the regular suffixes. Longest alternatives first, so "kept" is not
+ * beaten to the match by a shorter partial.
+ */
+function headAlternation(part) {
+  const esc = escapeRe(part.text);
+  if (!part.inflect) return esc;
+  const forms = [esc + "(?:s|es|ed|d|ing)?"];
+  const irregular = IRREGULAR_HEADS[part.text];
+  if (irregular) {
+    for (const f of irregular) forms.push(escapeRe(f));
+  }
+  forms.sort(function (a, b) { return b.length - a.length; });
+  return "(?:" + forms.join("|") + ")";
+}
+
+function bareWord(raw) {
+  return String(raw).toLowerCase().replace(/[^\p{L}\p{N}'’]/gu, "");
+}
+
+/**
+ * Turns a stored term into the sequence this matcher works on: literal words,
+ * `be`, and gaps where an object belongs.
+ */
+function termParts(term) {
+  const words = String(term || "").trim().split(/\s+/).filter(Boolean);
+  const parts = [];
+  let seenAnchor = false;
+
+  for (const raw of words) {
+    const w = bareWord(raw);
+    if (!w) continue;
+    if (PLACEHOLDER_WORDS.has(w)) {
+      // Never two gaps running, and never a leading gap: neither can anchor a
+      // match to anything.
+      if (parts.length && parts[parts.length - 1].type !== "gap") parts.push({ type: "gap" });
+      continue;
+    }
+    if (!seenAnchor && BE_WORDS.has(w)) {
+      parts.push({ type: "be" });
+      seenAnchor = true;
+      continue;
+    }
+    // Only the head inflects — "figure out" appears as "figured out", but the
+    // tail of an expression is fixed.
+    parts.push({ type: "word", text: w, inflect: !seenAnchor });
+    seenAnchor = true;
+  }
+
+  while (parts.length && parts[parts.length - 1].type === "gap") parts.pop();
+  return parts;
+}
+
+/**
+ * The readings to try, in order, least surprising first.
+ *
+ *   A  contiguous — "cost of living", "figured out". This is exactly what this
+ *      function matched before, so every sentence that worked still works, and
+ *      still produces a single blank.
+ *   B  the dictionary's own slot — "keep someone in the loop" finding
+ *      "keep me in the loop".
+ *   C  a slot the dictionary did not spell out — "take for granted" finding
+ *      "take our health for granted", or "be strapped for cash" finding
+ *      "I'm a bit strapped for cash".
+ *
+ * At most one gap is ever introduced, so a rendered exercise can never have
+ * more than two blanks.
+ */
+function planVariants(parts) {
+  const hasGap = parts.some(function (p) { return p.type === "gap"; });
+  const anchors = parts.filter(function (p) { return p.type !== "gap"; });
+  const plans = [anchors];
+
+  if (hasGap) plans.push(parts);
+  if (!hasGap && anchors.length >= 2) {
+    const withGap = anchors.slice();
+    withGap.splice(1, 0, { type: "gap" });
+    plans.push(withGap);
+  }
+  return plans;
+}
+
+/* One capture group per part, so match.indices gives exact character spans and
+   no index arithmetic has to be trusted. */
+function compilePlan(plan) {
+  let src = "";
+  const groups = [];
+
+  for (let i = 0; i < plan.length; i++) {
+    const p = plan[i];
+    if (p.type === "gap") {
+      // Lazy, so a contiguous reading always wins over a separated one.
+      src += "((?:\\s+" + WORD_SRC + "){1," + MAX_GAP_WORDS + "}?)";
+      groups.push({ blank: false, kind: "gap" });
+      continue;
+    }
+    if (i > 0) src += "\\s+";
+    if (p.type === "be") {
+      src += "(" + BE_SRC + ")";
+      groups.push({ blank: false, kind: "be" });
+    } else {
+      src += "(" + headAlternation(p) + ")";
+      groups.push({ blank: true, kind: "word" });
+    }
+  }
+
+  const lead = plan[0] && plan[0].type === "be" ? "" : "(?<![\\p{L}\\p{N}])";
+  return { re: new RegExp(lead + src + "(?![\\p{L}\\p{N}])", "diu"), groups };
+}
+
+/* Spans separated by nothing but whitespace become one blank. */
+function mergeSpans(text, spans) {
+  const sorted = spans.slice().sort(function (a, b) { return a[0] - b[0]; });
+  const out = [];
+  for (const s of sorted) {
+    const last = out[out.length - 1];
+    if (last && !/\S/.test(text.slice(last[1], s[0]))) last[1] = s[1];
+    else out.push([s[0], s[1]]);
+  }
+  return out;
+}
+
+/**
+ * Locates a stored term inside a sentence, tolerating the three ways a real
+ * example sentence legitimately differs from a dictionary headword: an
+ * inflected head, an object sitting inside the expression, and a conjugated or
+ * contracted `be`.
+ *
+ * Returns null when the term genuinely is not there. Deterministic, and no
+ * model is consulted — this is string matching, not parsing.
+ */
+export function findTermInSentence(sentence, term) {
+  const text = String(sentence || "");
+  const parts = termParts(term);
+  if (!text || !parts.length) return null;
+
+  for (const plan of planVariants(parts)) {
+    if (!plan.length) continue;
+
+    let compiled;
+    try {
+      compiled = compilePlan(plan);
+    } catch (e) {
+      continue;
+    }
+
+    const m = compiled.re.exec(text);
+    if (!m || !m.indices) continue;
+
+    const blankSpans = [];
+    const blankWords = [];
+    const gapWords = [];
+    for (let g = 0; g < compiled.groups.length; g++) {
+      const span = m.indices[g + 1];
+      if (!span) continue;
+      const piece = text.slice(span[0], span[1]).trim();
+      if (compiled.groups[g].blank) {
+        blankSpans.push(span);
+        if (piece) blankWords.push(piece);
+      } else if (compiled.groups[g].kind === "gap" && piece) {
+        gapWords.push(piece);
+      }
+    }
+    if (!blankSpans.length) continue;
+
+    const merged = mergeSpans(text, blankSpans);
+    // Three or more blanks stops being a question and starts being a puzzle.
+    if (merged.length > 2) continue;
+
+    /* The phrase as this sentence actually writes it, measured from the first
+       blanked word to the last. Deliberately not the whole match: that would
+       start at the copula, and "'m a bit strapped for cash" is not an answer
+       anyone would type. */
+    const phrase = text.slice(merged[0][0], merged[merged.length - 1][1]).trim();
+
+    return {
+      surface: phrase,
+      matchSurface: text.slice(m.indices[0][0], m.indices[0][1]).trim(),
+      blankSpans: merged,
+      blankWords: blankWords,
+      gapWords: gapWords,
+      hasBe: plan.some(function (p) { return p.type === "be"; })
+    };
+  }
+  return null;
+}
+
+function stripPlaceholders(term) {
+  return String(term || "")
+    .split(/\s+/)
+    .filter(function (w) { return w && !PLACEHOLDER_WORDS.has(bareWord(w)); })
+    .join(" ");
+}
+
+function stripLeadingBe(term) {
+  const words = String(term || "").trim().split(/\s+/).filter(Boolean);
+  if (words.length > 1 && BE_WORDS.has(bareWord(words[0]))) return words.slice(1).join(" ");
+  return "";
+}
+
+/** Distinct answers, comparing the way the marker will, keeping first spelling. */
+function dedupeAnswers(list) {
+  const seen = new Set();
+  const out = [];
+  for (const raw of list) {
+    const v = String(raw || "").trim();
+    if (!v) continue;
+    const key = normalizeAnswer(v);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(v);
+  }
+  return out;
+}
+
+/**
+ * Builds a fill-in-the-blank question from a term and its example sentence.
+ *
+ * The strategy, chosen once and applied everywhere: blank the expression's own
+ * words and leave everything else — including any object sitting inside it —
+ * visible. "We often take our health for granted." becomes "We often ___ our
+ * health ___.", which still reads as English, still shows what is being taken
+ * for granted, and asks for exactly the vocabulary being taught. The learner
+ * types one answer; the two gaps show where the expression wraps.
+ *
+ * `be` is matched but never blanked, so the copula stays where the grammar
+ * needs it and the question is about the words worth learning.
+ *
+ * Returns null when the term is not in the sentence, so the caller falls back
+ * to a kind that needs no example rather than showing a broken question.
  */
 export function blankOutTerm(sentence, term) {
   const text = String(sentence || "");
+  const found = findTermInSentence(text, term);
+  if (!found) return null;
+
+  let blanked = "";
+  let cursor = 0;
+  for (const span of found.blankSpans) {
+    blanked += text.slice(cursor, span[0]) + BLANK;
+    cursor = span[1];
+  }
+  blanked += text.slice(cursor);
+
+  // A sentence with nothing left but blanks is not answerable.
+  if (!/[\p{L}\p{N}]/u.test(blanked.split(BLANK).join(" "))) return null;
+
   const raw = String(term || "").trim();
-  if (!text || !raw) return null;
+  const blankSurface = found.blankWords.join(" ");
 
-  const words = raw.split(/\s+/).filter(Boolean);
-  if (!words.length) return null;
+  /* Every form a learner could reasonably type for THIS question: the stored
+     headword, the headword without its slot marker, the phrase exactly as the
+     sentence inflects it, the phrase with the sentence's own object, and — for
+     a `be` expression — the version without the copula, since the copula is
+     still printed in the question. */
+  const accepted = dedupeAnswers([
+    raw,
+    stripPlaceholders(raw),
+    blankSurface,
+    found.surface,
+    stripLeadingBe(raw),
+    stripLeadingBe(blankSurface)
+  ]);
 
-  const pattern = words
-    .map(function (w, i) {
-      const esc = w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      // Only the head word inflects in the phrases this app deals with
-      // ("figure out", "look forward to"), so only it gets a suffix allowance.
-      return i === 0 ? esc + "(?:s|es|ed|d|ing)?" : esc;
-    })
-    .join("\\s+");
-
-  const re = new RegExp("(^|[^\\p{L}\\p{N}])(" + pattern + ")(?![\\p{L}\\p{N}])", "iu");
-  const m = re.exec(text);
-  if (!m) return null;
-
-  const matched = m[2];
-  const start = m.index + m[1].length;
   return {
-    blanked: text.slice(0, start) + "_____" + text.slice(start + matched.length),
-    matchedForm: matched
+    blanked: blanked,
+    matchedForm: blankSurface,
+    surface: found.surface,
+    blankCount: found.blankSpans.length,
+    gapWords: found.gapWords,
+    accepted: accepted,
+    display: raw
   };
 }
 
@@ -498,15 +842,27 @@ export function buildExercise(item, kind, ctx) {
       evaluation: "deterministic",
       prompt: {
         format: "text",
-        instructionHe: "השלימו את המילה או הביטוי החסר.",
+        // Two blanks means the expression wraps around something — say so,
+        // rather than leaving the learner to work out why there are two.
+        instructionHe: blank.blankCount > 1
+          ? "השלימו את הביטוי החסר. שימו לב: הביטוי עוטף את המילים שבאמצע."
+          : "השלימו את המילה או הביטוי החסר.",
         question: blank.blanked,
         hintHe: item.hebrew || "",
-        placeholder: "Fill the blank"
+        placeholder: "Fill the blank",
+        blankCount: blank.blankCount
       },
-      // Both the dictionary form and the inflected form as it appears in the
-      // sentence are right; the learner is being tested on the word, not on
-      // guessing which tense the example happened to use.
-      answer: { accepted: [item.english, blank.matchedForm] }
+      /* Several surface forms are legitimately the same answer here: the
+         dictionary headword, the headword without its "someone"/"something"
+         slot, the form this sentence inflects it into, and the form carrying
+         this sentence's own object. `display` is the one worth teaching back,
+         which is the headword — not whichever variant the example happened to
+         use. Marking stays deterministic; no model judges a fill-in. */
+      answer: {
+        accepted: blank.accepted,
+        display: blank.display,
+        strategy: "phrase_blank"
+      }
     };
   }
 

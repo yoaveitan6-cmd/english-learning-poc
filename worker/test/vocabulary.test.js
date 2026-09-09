@@ -23,6 +23,7 @@ import {
   checkTextAnswer,
   isNearMiss,
   blankOutTerm,
+  findTermInSentence,
   pickDistractors,
   stableShuffle,
   chooseKind,
@@ -515,4 +516,269 @@ test("the summary names words rather than reporting one percentage", () => {
   assert.deepEqual(summary.introduced.map((v) => v.english), ["figure out"]);
   assert.deepEqual(summary.improved.map((v) => v.english), ["put off"]);
   assert.deepEqual(summary.needsReview.map((v) => v.english), ["call off"]);
+});
+
+/* ---------------- fill-in-the-blank for phrases ---------------- */
+
+/**
+ * The strategy under test: blank the expression's OWN words and leave
+ * everything else visible, including any object sitting inside the expression.
+ * One text input, at most two gaps, and several surface forms accepted as the
+ * same answer.
+ *
+ * These cases are the ones a real Gemini batch actually produced — the
+ * expressions the product is told to favour are exactly the ones a literal
+ * contiguous match could not find.
+ */
+
+test("a contiguous multi-word term gets one blank, as it always did", () => {
+  const b = blankOutTerm(
+    "The rising cost of living is making it difficult for many families.",
+    "cost of living"
+  );
+  assert.equal(b.blanked, "The rising _____ is making it difficult for many families.");
+  assert.equal(b.blankCount, 1);
+  assert.deepEqual(b.accepted, ["cost of living"]);
+  assert.equal(b.display, "cost of living");
+});
+
+test("a separable expression with a slot keeps the object visible", () => {
+  const b = blankOutTerm(
+    "Please keep me in the loop about any changes.",
+    "keep someone in the loop"
+  );
+  assert.equal(b.blanked, "Please _____ me _____ about any changes.");
+  assert.equal(b.blankCount, 2, "the expression wraps around the object");
+  // The sentence still reads as English and still says who is being kept informed.
+  assert.match(b.blanked, /me/);
+  assert.ok(b.accepted.includes("keep someone in the loop"));
+  assert.ok(b.accepted.includes("keep in the loop"));
+  assert.ok(b.accepted.includes("keep me in the loop"));
+  assert.equal(b.display, "keep someone in the loop", "feedback teaches the headword");
+});
+
+test("the same expression works with any person in the slot", () => {
+  const her = blankOutTerm("I will keep her in the loop from now on.", "keep someone in the loop");
+  assert.equal(her.blanked, "I will _____ her _____ from now on.");
+  assert.ok(her.accepted.includes("keep her in the loop"));
+
+  const them = blankOutTerm("We should keep the whole team in the loop.", "keep someone in the loop");
+  assert.equal(them.blanked, "We should _____ the whole team _____.");
+  assert.ok(them.accepted.includes("keep the whole team in the loop"));
+});
+
+test("an object the headword did not spell out is still found", () => {
+  // The stored term has no slot marker at all, yet the sentence separates it.
+  const b = blankOutTerm("We often take our health for granted.", "take for granted");
+  assert.equal(b.blanked, "We often _____ our health _____.");
+  assert.ok(b.accepted.includes("take for granted"));
+  assert.ok(b.accepted.includes("take our health for granted"));
+});
+
+test("a placeholder object is matched by the real object", () => {
+  const b = blankOutTerm("We often take our health for granted.", "take something for granted");
+  assert.equal(b.blanked, "We often _____ our health _____.");
+  assert.ok(b.accepted.includes("take something for granted"));
+  assert.ok(b.accepted.includes("take for granted"));
+  assert.ok(b.accepted.includes("take our health for granted"));
+});
+
+test("a `be` expression is found through contraction and conjugation, and the copula is never blanked", () => {
+  const contracted = blankOutTerm("I'm a bit strapped for cash this month.", "be strapped for cash");
+  assert.equal(contracted.blanked, "I'm a bit _____ this month.");
+  assert.equal(contracted.blankCount, 1);
+
+  const past = blankOutTerm("He was strapped for cash last year.", "be strapped for cash");
+  assert.equal(past.blanked, "He was _____ last year.");
+
+  const plural = blankOutTerm("They are strapped for cash right now.", "be strapped for cash");
+  assert.equal(plural.blanked, "They are _____ right now.");
+
+  for (const b of [contracted, past, plural]) {
+    // The copula is already printed in the question, so both forms are right.
+    assert.ok(b.accepted.includes("strapped for cash"));
+    assert.ok(b.accepted.includes("be strapped for cash"));
+    // ...and the copula's surface never leaks into an answer.
+    assert.ok(!b.accepted.some((a) => /^['’]?(m|re|s|am|is|are|was|were)\b/i.test(a)), JSON.stringify(b.accepted));
+  }
+});
+
+test("head inflection still works, including alongside a slot", () => {
+  const simple = blankOutTerm("She figured out the problem alone.", "figure out");
+  assert.equal(simple.blanked, "She _____ the problem alone.");
+  assert.ok(simple.accepted.includes("figured out"));
+
+  const inflectedAndSeparated = blankOutTerm(
+    "He kept me in the loop the whole time.",
+    "keep someone in the loop"
+  );
+  assert.equal(inflectedAndSeparated.blanked, "He _____ me _____ the whole time.");
+  assert.ok(inflectedAndSeparated.accepted.includes("kept me in the loop"));
+});
+
+test("a contiguous reading always wins over a separated one", () => {
+  // "keep me in the loop" could in principle be read with a gap elsewhere;
+  // the lazy gap guarantees the shortest, most natural match.
+  const b = blankOutTerm("Just keep in the loop, please.", "keep someone in the loop");
+  assert.equal(b.blanked, "Just _____, please.", "no object present, so one blank");
+  assert.equal(b.blankCount, 1);
+});
+
+test("a term that is genuinely absent still falls back safely", () => {
+  assert.equal(blankOutTerm("A sentence about something else.", "figure out"), null);
+  assert.equal(blankOutTerm("He is a catalyst for change.", "cat"), null);
+  assert.equal(blankOutTerm("", "figure out"), null);
+  assert.equal(blankOutTerm("Some sentence.", ""), null);
+  assert.equal(blankOutTerm("Some sentence.", "   "), null);
+  // A gap is bounded: an object five words long is not the same expression.
+  assert.equal(
+    blankOutTerm("Please keep the entire extended leadership team in the loop.", "keep someone in the loop"),
+    null
+  );
+});
+
+test("a sentence that is only the expression is refused rather than blanked away", () => {
+  assert.equal(blankOutTerm("Figure out.", "figure out"), null);
+});
+
+test("the matcher is deterministic", () => {
+  const args = ["Please keep me in the loop about any changes.", "keep someone in the loop"];
+  assert.deepEqual(blankOutTerm(...args), blankOutTerm(...args));
+});
+
+test("findTermInSentence is the shared yes/no the written-sentence check uses", () => {
+  assert.ok(findTermInSentence("I'll keep her in the loop.", "keep someone in the loop"));
+  assert.ok(findTermInSentence("We take it for granted.", "take something for granted"));
+  assert.ok(findTermInSentence("I'm strapped for cash.", "be strapped for cash"));
+  assert.equal(findTermInSentence("I told her about it.", "keep someone in the loop"), null);
+});
+
+/* ---------------- the exercise these produce ---------------- */
+
+function phraseItem(over = {}) {
+  return {
+    id: "p1",
+    english: "keep someone in the loop",
+    hebrew: "לעדכן, להשאיר בתמונה",
+    example: "Please keep me in the loop about any changes.",
+    mastery: "familiar",
+    successes: 2,
+    failures: 0,
+    streak: 2,
+    intervalDays: 3,
+    lastPracticedAt: 1,
+    dueAt: 0,
+    source: "system",
+    approval: "approved",
+    ...over
+  };
+}
+
+test("a phrase exercise carries the answer metadata the marker needs", () => {
+  const ex = buildExercise(phraseItem(), "fill_blank", { seed: "s", pool: [], contextByItem: {} });
+  assert.equal(ex.kind, "fill_blank");
+  assert.equal(ex.contentFrom, "local", "no model writes a fill-in-the-blank");
+  assert.equal(ex.evaluation, "deterministic", "and no model marks one");
+  assert.equal(ex.prompt.question, "Please _____ me _____ about any changes.");
+  assert.equal(ex.prompt.blankCount, 2);
+  assert.match(ex.prompt.instructionHe, /עוטף/, "two blanks are explained, not left mysterious");
+  assert.equal(ex.answer.strategy, "phrase_blank");
+  assert.equal(ex.answer.display, "keep someone in the loop");
+  assert.ok(ex.answer.accepted.length >= 3);
+  // The answer half must never appear in the half the browser is sent.
+  assert.equal(JSON.stringify(ex.prompt).includes("keep"), false);
+});
+
+test("a one-blank phrase says so, without the wrapping note", () => {
+  const ex = buildExercise(
+    phraseItem({ english: "cost of living", example: "The rising cost of living worries everyone." }),
+    "fill_blank",
+    { seed: "s", pool: [], contextByItem: {} }
+  );
+  assert.equal(ex.prompt.blankCount, 1);
+  assert.doesNotMatch(ex.prompt.instructionHe, /עוטף/);
+});
+
+test("Smart Mix now reaches fill-in-the-blank for phrase types instead of falling back", () => {
+  const ctx = { hebrewPoolSize: 9, englishPoolSize: 9, contextByItem: {} };
+  const cases = [
+    ["keep someone in the loop", "Please keep me in the loop about any changes."],
+    ["take something for granted", "We often take our health for granted."],
+    ["be strapped for cash", "I'm a bit strapped for cash this month."],
+    ["cost of living", "The rising cost of living worries everyone."]
+  ];
+  for (const [english, example] of cases) {
+    const item = phraseItem({ english, example, mastery: "familiar" });
+    const available = availableKinds(item, ctx);
+    assert.equal(available.fill_blank, true, english + " should support fill-in-the-blank");
+    assert.equal(
+      chooseKind(item, { available: available }),
+      "fill_blank",
+      english + " should be asked as a fill-in-the-blank at 'familiar'"
+    );
+  }
+});
+
+test("a session of phrase vocabulary composes fill-in-the-blank questions", () => {
+  const items = [
+    phraseItem({ id: "a", english: "keep someone in the loop", example: "Please keep me in the loop about any changes." }),
+    phraseItem({ id: "b", english: "take something for granted", example: "We often take our health for granted." }),
+    phraseItem({ id: "c", english: "be strapped for cash", example: "I'm a bit strapped for cash this month." })
+  ];
+  const composed = composeSession({
+    mode: "standard",
+    practiceMode: "fill_blank",
+    sessionKey: "2026-09-09:fill_blank",
+    newItems: [],
+    reviewItems: items,
+    pool: items,
+    contextByItem: {}
+  });
+  assert.equal(composed.exercises.length, 3, "none of the three falls back");
+  for (const e of composed.exercises) {
+    assert.equal(e.kind, "fill_blank");
+    assert.match(e.prompt.question, /_____/);
+  }
+});
+
+/* ---------------- marking a phrase answer ---------------- */
+
+test("every intended surface form of a phrase answer is accepted", () => {
+  const ex = buildExercise(phraseItem(), "fill_blank", { seed: "s", pool: [], contextByItem: {} });
+  const good = [
+    "keep someone in the loop",
+    "keep in the loop",
+    "keep me in the loop",
+    "Keep Me In The Loop",
+    "  keep   me  in the loop  ",
+    "keep me in the loop.",
+    "keep ... in the loop"
+  ];
+  for (const g of good) {
+    assert.equal(checkTextAnswer(g, ex.answer.accepted).correct, true, "should accept: " + g);
+  }
+});
+
+test("a `be` phrase accepts both with and without the copula", () => {
+  const ex = buildExercise(
+    phraseItem({ english: "be strapped for cash", example: "I'm a bit strapped for cash this month." }),
+    "fill_blank",
+    { seed: "s", pool: [], contextByItem: {} }
+  );
+  assert.equal(checkTextAnswer("strapped for cash", ex.answer.accepted).correct, true);
+  assert.equal(checkTextAnswer("be strapped for cash", ex.answer.accepted).correct, true);
+});
+
+test("an answer that changes the meaning is rejected", () => {
+  const ex = buildExercise(phraseItem(), "fill_blank", { seed: "s", pool: [], contextByItem: {} });
+  for (const bad of [
+    "keep me out of the loop",     // opposite meaning
+    "in the loop",                 // only half the expression
+    "keep me informed",            // a paraphrase, not the target vocabulary
+    "tell me",
+    "loop",
+    ""
+  ]) {
+    assert.equal(checkTextAnswer(bad, ex.answer.accepted).correct, false, "should reject: " + bad);
+  }
 });

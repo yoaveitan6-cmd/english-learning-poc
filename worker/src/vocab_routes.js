@@ -64,6 +64,7 @@ import {
   summariseSession,
   scheduleAfterAnswer,
   checkTextAnswer,
+  findTermInSentence,
   normalizeAnswer,
   isPracticeMode,
   PRACTICE_KINDS,
@@ -1407,7 +1408,7 @@ function markDeterministically(exercise, stored, answerText, item) {
       // but saying "almost, check the spelling" is more useful than "wrong".
       verdict: result.near ? "near" : "wrong",
       headlineHe: result.near ? "כמעט — בדקו את האיות." : "לא נכון.",
-      correctAnswer: accepted[0] || "",
+      correctAnswer: stored.display || accepted[0] || "",
       explanationHe: word.hebrew && word.english
         ? "‏" + word.english + " = " + word.hebrew
         : "",
@@ -2088,15 +2089,14 @@ function fallbackWrittenMark(term, sentence, reason) {
   };
 }
 
-/** Word-boundary match tolerating the head word's simple inflections. */
+/**
+ * Did the learner's sentence actually use the target expression?
+ *
+ * Shares the phrase matcher with fill-in-the-blank, so a learner who writes
+ * "I'll keep her in the loop" for the headword "keep someone in the loop" is
+ * credited rather than told they ignored the word. A second, stricter copy of
+ * this rule would only disagree with the first.
+ */
 function sentenceContainsTerm(sentence, term) {
-  const words = String(term || "").trim().split(/\s+/).filter(Boolean);
-  if (!words.length) return false;
-  const pattern = words
-    .map(function (w, i) {
-      const esc = w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      return i === 0 ? esc + "(?:s|es|ed|d|ing)?" : esc;
-    })
-    .join("\\s+");
-  return new RegExp("(^|[^\\p{L}\\p{N}])" + pattern + "(?![\\p{L}\\p{N}])", "iu").test(String(sentence || ""));
+  return !!findTermInSentence(sentence, term);
 }

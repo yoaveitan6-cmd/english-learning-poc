@@ -1554,3 +1554,150 @@ test("the vocabulary model can be moved by configuration without a code change",
     stub.restore();
   }
 });
+
+/* ---------------- fill-in-the-blank for phrases, end to end ---------------- */
+
+/** The three shapes the phrase matcher exists for, as real library words. */
+const PHRASE_WORDS = [
+  ["cost of living", "יוקר המחיה", "The rising cost of living worries everyone."],
+  ["keep someone in the loop", "לעדכן, להשאיר בתמונה", "Please keep me in the loop about any changes."],
+  ["be strapped for cash", "להיות לחוץ בכסף", "I'm a bit strapped for cash this month."],
+  ["take something for granted", "לקחת כמובן מאליו", "We often take our health for granted."]
+];
+
+async function seedPhrases(env) {
+  for (const [term, hebrew, example] of PHRASE_WORDS) {
+    const r = await call(req("POST", "/vocab/items", { body: { term, hebrew, example, enrich: false } }), env);
+    assert.equal(r.res.status, 200, r.text);
+  }
+  // Established words, so Smart Mix reaches for fill-in-the-blank.
+  env.DB.exec("UPDATE vocabulary_state SET mastery='familiar', successes=2, dueAt=0, lastPracticedAt=1");
+}
+
+test("phrase vocabulary produces real fill-in-the-blank questions, with no AI call at all", async () => {
+  const env = makeEnv();
+  await withNoNetwork(async () => {
+    await seedPhrases(env);
+
+    const r = await call(req("POST", "/vocab/session", { body: { practiceMode: "fill_blank" } }), env);
+    assert.equal(r.res.status, 200, r.text);
+    assert.equal(r.body.aiCalls, 0, "building a blank must never call a model");
+
+    const byTerm = {};
+    for (const e of r.body.session.exercises) byTerm[e.word.english] = e;
+
+    // Every seeded phrase produced a question — none fell back.
+    assert.equal(r.body.session.exercises.length, PHRASE_WORDS.length, JSON.stringify(Object.keys(byTerm)));
+
+    assert.equal(byTerm["cost of living"].prompt.question, "The rising _____ worries everyone.");
+    assert.equal(byTerm["cost of living"].prompt.blankCount, 1);
+
+    assert.equal(byTerm["keep someone in the loop"].prompt.question, "Please _____ me _____ about any changes.");
+    assert.equal(byTerm["keep someone in the loop"].prompt.blankCount, 2);
+
+    assert.equal(byTerm["be strapped for cash"].prompt.question, "I'm a bit _____ this month.");
+    assert.equal(byTerm["be strapped for cash"].prompt.blankCount, 1);
+
+    assert.equal(byTerm["take something for granted"].prompt.question, "We often _____ our health _____.");
+
+    for (const e of r.body.session.exercises) {
+      assert.equal(e.contentFrom, "local");
+      // The answer half never reaches the browser...
+      assert.equal(e.answer, undefined);
+      // ...and the blanked words are genuinely gone from the question, so the
+      // learner cannot read the answer off the sentence they are completing.
+      const shown = JSON.stringify(e.prompt).toLowerCase();
+      for (const w of e.word.english.split(/\s+/)) {
+        if (["someone", "something", "somebody", "be", "of", "for", "in", "the"].includes(w)) continue;
+        assert.equal(shown.includes(w), false, w + " leaked into the question for " + e.word.english);
+      }
+    }
+  });
+});
+
+test("phrase answers are graded deterministically, in every intended surface form", async () => {
+  const env = makeEnv();
+  let session;
+  await withNoNetwork(async () => {
+    await seedPhrases(env);
+    session = (await call(req("POST", "/vocab/session", { body: { practiceMode: "fill_blank" } }), env)).body.session;
+
+    const answersByTerm = {
+      "cost of living": "cost of living",
+      "keep someone in the loop": "keep me in the loop",     // the sentence's own object
+      "be strapped for cash": "strapped for cash",           // copula already printed
+      "take something for granted": "take for granted"       // headword without the slot
+    };
+
+    for (const e of session.exercises) {
+      const r = await call(
+        req("POST", "/vocab/session/answer", {
+          body: { exerciseId: e.exerciseId, answer: answersByTerm[e.word.english], practiceMode: "fill_blank" }
+        }),
+        env
+      );
+      assert.equal(r.res.status, 200, r.text);
+      assert.equal(r.body.correct, true, e.word.english + " answered '" + answersByTerm[e.word.english] + "'");
+      assert.equal(r.body.evaluatedBy, "deterministic", "no model marks a fill-in-the-blank");
+    }
+  });
+});
+
+test("a phrase answer that changes the meaning is rejected, and feedback teaches the headword", async () => {
+  const env = makeEnv();
+  await withNoNetwork(async () => {
+    await seedPhrases(env);
+    const session = (await call(req("POST", "/vocab/session", { body: { practiceMode: "fill_blank" } }), env)).body.session;
+    const ex = session.exercises.find((e) => e.word.english === "keep someone in the loop");
+
+    const r = await call(
+      req("POST", "/vocab/session/answer", {
+        body: { exerciseId: ex.exerciseId, answer: "keep me out of the loop", practiceMode: "fill_blank" }
+      }),
+      env
+    );
+    assert.equal(r.body.correct, false);
+    assert.equal(r.body.evaluatedBy, "deterministic");
+    // Not "keep me in the loop" — the headword is the thing worth learning.
+    assert.equal(r.body.feedback.correctAnswer, "keep someone in the loop");
+  });
+});
+
+test("Smart Mix uses fill-in-the-blank for phrases instead of falling back to Hebrew to English", async () => {
+  const env = makeEnv();
+  await withGemini(async () => {
+    await withNoNetwork(async () => { await seedPhrases(env); });
+    await makePlan(env);
+    const s = (await call(req("POST", "/vocab/session", { body: {} }), env)).body.session;
+    const kinds = s.exercises.filter((e) => e.word && PHRASE_WORDS.some(([t]) => t === e.word.english))
+      .map((e) => e.kind);
+    assert.ok(kinds.includes("fill_blank"), "Smart Mix produced: " + kinds.join(", "));
+  });
+});
+
+test("a written sentence using a separated expression is credited when the AI is unavailable", async () => {
+  const env = makeEnv();
+  await withNoNetwork(async () => {
+    await seedPhrases(env);
+    env.DB.exec("UPDATE vocabulary_state SET mastery='mastered', successes=9");
+  });
+
+  await withGemini(
+    async () => {
+      await makePlan(env);
+      const s = (await call(req("POST", "/vocab/session", { body: {} }), env)).body.session;
+      const write = s.exercises.find((e) => e.kind === "write_sentence" && e.word.english === "keep someone in the loop");
+      assert.ok(write, "expected a written-sentence exercise for the phrase");
+
+      const r = await call(
+        req("POST", "/vocab/session/answer", {
+          body: { exerciseId: write.exerciseId, answer: "I will keep her in the loop about the schedule." }
+        }),
+        env
+      );
+      assert.equal(r.body.evaluatedBy, "ai_unavailable");
+      assert.equal(r.body.correct, true, "the learner did use the expression, just not contiguously");
+    },
+    { writeEval: () => jsonResponse(429, { error: { status: "RESOURCE_EXHAUSTED", message: "quota" } }) }
+  );
+});
