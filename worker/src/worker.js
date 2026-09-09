@@ -52,6 +52,16 @@
  *   POST   /vocab/session/answer                     -> one answer, evaluated and persisted
  *   POST   /vocab/session/complete                   -> apply the scheduler, close Today's Plan item
  *
+ * Sentence Practice (added stage 5), all in src/sentence_routes.js, under
+ * /sentence-practice/:
+ *   GET    /sentence-practice/config                 -> exercise types and reinforcement rule, read-only
+ *   GET    /sentence-practice/session                -> today's stored session, or null
+ *   POST   /sentence-practice/session                -> create it once (from Today's Plan's grammar targets),
+ *                                                        or return the stored one
+ *   POST   /sentence-practice/session/answer          -> one answer, evaluated and persisted; a miss can
+ *                                                        activate that target's one reinforcement exercise
+ *   POST   /sentence-practice/session/complete        -> apply learning-target evidence, close Today's Plan item
+ *
  * Those routes call NO AI. Today's Plan is produced by deterministic
  * application code in src/planner.js, so planning behaviour is stable,
  * explainable, and costs no Gemini quota. Gemini's job is to generate CONTENT
@@ -83,6 +93,7 @@ import {
 } from "./util.js";
 import { routeLearning, isLearningPath, recordAiUsage } from "./learning.js";
 import { routeVocab, isVocabPath } from "./vocab_routes.js";
+import { routeSentencePractice, isSentencePracticePath } from "./sentence_routes.js";
 import { GENERATOR as PLANNER_GENERATOR } from "./planner.js";
 import {
   callGemini,
@@ -175,6 +186,15 @@ async function route(request, env, cors) {
     const auth = await authenticate(request, env);
     if (auth.error) return json(auth.error, auth.status, cors);
     const handled = await routeVocab(request, env, cors, path, method, auth.ownerHash);
+    if (handled) return handled;
+  }
+
+  // Sentence Practice — its own /sentence-practice/ namespace, same pattern
+  // as Vocabulary's /vocab/ namespace.
+  if (isSentencePracticePath(path)) {
+    const auth = await authenticate(request, env);
+    if (auth.error) return json(auth.error, auth.status, cors);
+    const handled = await routeSentencePractice(request, env, cors, path, method, auth.ownerHash);
     if (handled) return handled;
   }
 

@@ -241,7 +241,10 @@ export function modelFromUrl(url) {
  * batched.
  */
 export function stubGeminiByPurpose(handlers) {
-  const counts = { generation: 0, context: 0, enrichment: 0, writeEval: 0, unknown: 0 };
+  const counts = {
+    generation: 0, context: 0, enrichment: 0, writeEval: 0,
+    sentenceGeneration: 0, sentenceEval: 0, unknown: 0
+  };
   /* Which model each purpose was actually sent to. Model routing is a product
      decision about free-tier budgets, so the tests assert it rather than
      trusting that the right constant was imported. */
@@ -253,9 +256,11 @@ export function stubGeminiByPurpose(handlers) {
 
     let purpose = "unknown";
     if (/meaning-in-context questions/.test(system)) purpose = "context";
-    else if (/judge ONE sentence/.test(system)) purpose = "writeEval";
+    else if (/judge ONE sentence a Hebrew-speaking learner wrote to practise ONE English word/.test(system)) purpose = "writeEval";
+    else if (/judge ONE sentence a Hebrew-speaking English learner wrote for a grammar/.test(system)) purpose = "sentenceEval";
     else if (/Term the learner wants to save/.test(user)) purpose = "enrichment";
     else if (/choose new English vocabulary/.test(system)) purpose = "generation";
+    else if (/grammar and sentence-building practice exercises/.test(system)) purpose = "sentenceGeneration";
 
     counts[purpose] = (counts[purpose] || 0) + 1;
     models[purpose] = modelFromUrl(url);
@@ -265,3 +270,120 @@ export function stubGeminiByPurpose(handlers) {
   });
   return { stub, counts, models, restore: () => stub.restore(), calls: stub.calls };
 }
+
+/* ---------------- sentence practice fixtures ---------------- */
+
+/** How many slots (base + reserve) a given user prompt asked for. */
+export function countSentenceSlots(userText) {
+  return (String(userText).match(/^\d+\.\s+target:/gm) || []).length;
+}
+
+/** Parses the requested type and pool for each numbered slot in the prompt. */
+export function parseSentenceSlots(userText) {
+  const lines = String(userText).split("\n");
+  const slots = [];
+  let current = null;
+  for (const line of lines) {
+    const head = /^(\d+)\.\s+target:\s*(.+?)\s*\(([^)]*)\)/.exec(line);
+    if (head) {
+      if (current) slots.push(current);
+      current = { index: Number(head[1]), targetLabel: head[2], kindNote: head[3], reserve: false };
+      continue;
+    }
+    const type = /requested type:\s*(\S+)/.exec(line);
+    if (type && current) current.requestedType = type[1];
+    if (current && /reinforcement follow-up/.test(line)) current.reserve = true;
+  }
+  if (current) slots.push(current);
+  return slots;
+}
+
+/** One well-formed exercise per requested slot, honouring the requested type
+    so tests can assert the whole batch round-trips. `overrides(i, slot)` may
+    return a partial object to merge in, for building malformed/edge fixtures. */
+export function sentenceExerciseBatch(userText, overrides) {
+  const slots = parseSentenceSlots(userText);
+  const items = slots.map((slot, i) => {
+    const base = sampleExerciseFor(slot.requestedType, i, slot);
+    const extra = typeof overrides === "function" ? (overrides(i, slot) || {}) : {};
+    return { ...base, ...extra };
+  });
+  return { items };
+}
+
+function sampleExerciseFor(type, i, slot) {
+  const tag = (slot.reserve ? "reinforcement-" : "base-") + i;
+  const common = {
+    instructionHe: "השלימו את התרגיל.",
+    explanationHe: "הסבר קצר בעברית על " + (slot.targetLabel || "the rule") + ".",
+    grammarNote: slot.targetLabel || "",
+    difficulty: "medium",
+    naturalAlternative: ""
+  };
+  if (type === "choice") {
+    return {
+      type: "choice",
+      prompt: "Which is correct? (" + tag + ")",
+      options: ["I saw him yesterday. (" + tag + ")", "I have seen him yesterday. (" + tag + ")"],
+      correctOption: "I saw him yesterday. (" + tag + ")",
+      acceptedAnswers: [],
+      canonicalAnswer: "",
+      deterministicSafe: false,
+      ...common
+    };
+  }
+  if (type === "correction") {
+    return {
+      type: "correction",
+      prompt: "She don't like coffee. (" + tag + ")",
+      options: [],
+      correctOption: "",
+      acceptedAnswers: ["She doesn't like coffee. (" + tag + ")"],
+      canonicalAnswer: "She doesn't like coffee. (" + tag + ")",
+      deterministicSafe: true,
+      ...common
+    };
+  }
+  if (type === "transformation") {
+    return {
+      type: "transformation",
+      prompt: "Rewrite using Present Perfect (" + tag + "): I started living here three years ago.",
+      options: [],
+      correctOption: "",
+      acceptedAnswers: [],
+      canonicalAnswer: "I have lived here for three years. (" + tag + ")",
+      deterministicSafe: false,
+      ...common
+    };
+  }
+  if (type === "free_sentence") {
+    return {
+      type: "free_sentence",
+      prompt: "Write one sentence about an experience using the target (" + tag + ").",
+      options: [],
+      correctOption: "",
+      acceptedAnswers: [],
+      canonicalAnswer: "",
+      deterministicSafe: false,
+      ...common
+    };
+  }
+  // fill_blank (default)
+  return {
+    type: "fill_blank",
+    prompt: "Yesterday I ___ to the store. (" + tag + ")",
+    options: ["went (" + tag + ")", "go (" + tag + ")", "have gone (" + tag + ")"],
+    correctOption: "went (" + tag + ")",
+    acceptedAnswers: [],
+    canonicalAnswer: "",
+    deterministicSafe: false,
+    ...common
+  };
+}
+
+export const SAMPLE_SENTENCE_EVAL = {
+  correct: true,
+  correctedSentence: "",
+  explanationHe: "השימוש נכון וטבעי.",
+  betterAlternative: ""
+};

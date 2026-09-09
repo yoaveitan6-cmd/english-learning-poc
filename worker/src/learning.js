@@ -438,7 +438,7 @@ async function loadTargets(env, ownerHash) {
   return res.results || [];
 }
 
-function publicTarget(row) {
+export function publicTarget(row) {
   return {
     id: row.target_id,
     label: row.label,
@@ -542,8 +542,9 @@ function normalizeEvidenceList(raw) {
   return { ids: ids };
 }
 
-/** Shared by the evidence route and by activity completion. */
-async function applyEvidenceToTargets(env, ownerHash, evidence) {
+/** Shared by the evidence route, activity completion, and Sentence Practice's
+    own completion route — one lifecycle implementation, never a second one. */
+export async function applyEvidenceToTargets(env, ownerHash, evidence) {
   const counts = new Map();
   for (const id of evidence.errors) {
     const c = counts.get(id) || { errors: 0, successes: 0 };

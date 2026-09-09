@@ -626,6 +626,48 @@
     </div>
   </div>
 
+  <!-- ================= Sentence Practice =================
+       The second real learning activity. Opened from Today's Plan.
+
+       Its targets and item count come from Today's Plan's deterministic
+       planner — this card never picks its own targets. Gemini is used only
+       to write CONTENT for the targets already chosen (one batched call per
+       day) and, when genuinely needed, to judge an open-ended answer.
+
+       Like every other section it is its own IIFE reading the Worker URL and
+       sync key from the Cloud sync card, so there is one identity in play and
+       a failure here cannot take down the other cards.
+       ================================================ -->
+  <div class="card stack" id="spCard">
+    <div class="today-head">
+      <h2>Sentence Practice</h2>
+      <span id="spProgressChip" class="chip">&mdash;</span>
+    </div>
+
+    <p class="status" id="spStatus">Idle. Save your Worker URL and sync key below first.</p>
+    <pre id="spError" hidden>&mdash;</pre>
+
+    <div id="spIntro">
+      <p class="note" style="margin-top:0">
+        Your session comes from Today&rsquo;s Plan: one or two grammar/sentence targets, chosen from your
+        recent mistakes plus useful coverage topics. It is created once a day and is the same on every device.
+      </p>
+      <button id="btnSpStart" type="button">Start today&rsquo;s sentence practice</button>
+    </div>
+
+    <div id="spRunning" hidden>
+      <p class="vocab-meta" id="spTargets"></p>
+      <div class="vocab-bar"><span id="spBar"></span></div>
+      <div id="spExercise"></div>
+      <div id="spFeedback" hidden></div>
+      <button id="btnSpNext" type="button" hidden>Next</button>
+      <button id="btnSpFinish" type="button" hidden>Finish session</button>
+      <p class="note" id="spRule"></p>
+    </div>
+
+    <div id="spSummary" hidden></div>
+  </div>
+
   <div class="card">
     <button id="btnStart" type="button">Start speaking</button>
     <p class="status" id="startStatus">Idle. Press the button to test the microphone, then speak one English sentence.</p>
@@ -2504,6 +2546,18 @@
             document.dispatchEvent(new CustomEvent("english:open-vocabulary"));
           });
           act.appendChild(open);
+        } else if (a.type === "sentence_practice") {
+          /* Same rule as Vocabulary: real learning work, not a bare click,
+             is what completes this activity. The Sentence Practice card owns
+             its own session and reports back through english:plan-updated. */
+          var openSp = document.createElement("button");
+          openSp.type = "button";
+          openSp.className = "mini";
+          openSp.textContent = "Start";
+          openSp.addEventListener("click", function () {
+            document.dispatchEvent(new CustomEvent("english:open-sentence-practice"));
+          });
+          act.appendChild(openSp);
         } else {
           /* The other activities have no experience built yet, so marking
              them done by hand is still the honest option. Each will lose its
@@ -3471,6 +3525,564 @@
 
     clearError();
     setTab("session");
+
+    var cfg = config();
+    if (!configProblem(cfg)) {
+      status("Checking for today’s session…");
+      loadSession(false)["catch"](function () {
+        status("Could not reach the Worker. See the error above.");
+      });
+    }
+  }
+
+  try {
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", init);
+    } else {
+      init();
+    }
+  } catch (e) {
+    /* Every other section must keep working if this one fails. */
+    try { window.console && window.console.error && window.console.error(e); } catch (e2) { /* ignore */ }
+  }
+})();
+</script>
+<script>
+/* ------------------------------------------------------------------
+   Sentence Practice — the second real learning activity.
+
+   Its own IIFE, like every other section, so a failure here cannot take
+   down the microphone, speech, sync, AI, Today's Plan or Vocabulary cards.
+
+   It reads the Worker URL and sync key straight out of the Cloud sync
+   card's inputs, exactly as the other product cards do: one place to
+   configure, one identity, no chance of the two drifting apart.
+
+   No learning state is cached in this browser. Every exercise and every
+   answer comes from D1 on each request, which is what makes "the Mac and
+   the iPhone show the same session" and "a refresh mid-session loses
+   nothing" observable rather than merely intended.
+
+   It talks to Today's Plan through two DOM events and nothing else,
+   exactly like Vocabulary does:
+     english:open-sentence-practice   the plan asks this card to take over
+     english:plan-updated             this card tells the plan it has changed
+   ------------------------------------------------------------------ */
+(function () {
+  "use strict";
+
+  var MIN_KEY_LEN = 20;
+  var TYPE_LABEL = {
+    fill_blank: "Fill in the blank",
+    choice: "Choose the correct sentence",
+    correction: "Correct the sentence",
+    transformation: "Sentence transformation",
+    free_sentence: "Write your own sentence"
+  };
+
+  var el = {};
+  var busy = false;
+  var session = null;
+  var cursor = 0;
+  var startedAt = 0;
+
+  function byId(id) { return document.getElementById(id); }
+  function status(msg) { if (el.status) { el.status.textContent = msg; } }
+
+  function clearError() {
+    if (!el.error) { return; }
+    el.error.textContent = "—";
+    el.error.hidden = true;
+  }
+
+  function showError(operation, lines) {
+    if (!el.error) { return; }
+    el.error.textContent = ["ERROR during: " + operation].concat(lines).join("\n");
+    el.error.hidden = false;
+  }
+
+  function config() {
+    var apiEl = byId("syncApi");
+    var keyEl = byId("syncKey");
+    return {
+      base: String((apiEl && apiEl.value) || "").trim().replace(/\/+$/, ""),
+      key: String((keyEl && keyEl.value) || "").trim()
+    };
+  }
+
+  function configProblem(cfg) {
+    if (!cfg.base) { return "Worker URL is empty. Fill it in the Cloud sync card and press Save."; }
+    if (!/^https?:\/\//i.test(cfg.base)) { return "Worker URL must start with https://"; }
+    if (!cfg.key) { return "Sync key is empty. Press Generate in the Cloud sync card, then Save."; }
+    if (cfg.key.length < MIN_KEY_LEN) {
+      return "Sync key is only " + cfg.key.length + " characters. At least " + MIN_KEY_LEN + " are required.";
+    }
+    return null;
+  }
+
+  function setBusy(v) {
+    busy = v;
+    var buttons = el.card ? el.card.getElementsByTagName("button") : [];
+    for (var i = 0; i < buttons.length; i++) { buttons[i].disabled = v; }
+  }
+
+  function api(operation, method, path, bodyObj) {
+    var cfg = config();
+    var problem = configProblem(cfg);
+    if (problem) {
+      showError(operation, ["Configuration problem: " + problem]);
+      status("Not configured.");
+      return Promise.reject(new Error(problem));
+    }
+
+    var init = {
+      method: method,
+      headers: { "X-Sync-Key": cfg.key },
+      mode: "cors",
+      cache: "no-store",
+      credentials: "omit"
+    };
+    if (bodyObj !== undefined && bodyObj !== null) {
+      init.headers["Content-Type"] = "application/json";
+      init.body = JSON.stringify(bodyObj);
+    }
+
+    var started = Date.now();
+    return fetch(cfg.base + path, init).then(function (res) {
+      return res.text().then(function (text) {
+        var elapsed = Date.now() - started;
+        var data = null;
+        try { data = JSON.parse(text); } catch (e) { data = null; }
+        if (!res.ok || !data) {
+          var err = new Error("HTTP " + res.status);
+          err.status = res.status;
+          err.data = data;
+          // A 409 is the server saying "not yet" — a normal answer to "can I
+          // finish?", not a failure worth a stack of diagnostics.
+          if (res.status !== 409) {
+            showError(operation, [
+              method + " " + cfg.base + path,
+              "HTTP " + res.status + " " + (res.statusText || "") + "  (" + elapsed + " ms)",
+              "",
+              text.slice(0, 1200) || "(empty body)"
+            ]);
+          }
+          throw err;
+        }
+        clearError();
+        return data;
+      });
+    }, function (networkErr) {
+      showError(operation, [
+        method + " " + cfg.base + path,
+        "The request never reached the Worker.",
+        String((networkErr && networkErr.message) || networkErr),
+        "",
+        "Usual causes: wrong Worker URL, no network, or this page's origin is",
+        "missing from ALLOWED_ORIGINS in the Worker configuration."
+      ]);
+      throw networkErr;
+    });
+  }
+
+  function tzOffsetMinutes() {
+    try { return -new Date().getTimezoneOffset(); } catch (e) { return 0; }
+  }
+
+  function clear(node) {
+    while (node && node.firstChild) { node.removeChild(node.firstChild); }
+  }
+
+  function elem(tag, className, text) {
+    var n = document.createElement(tag);
+    if (className) { n.className = className; }
+    if (text !== undefined && text !== null) { n.textContent = text; }
+    return n;
+  }
+
+  /* ---------------- session ---------------- */
+
+  function loadSession(quiet) {
+    return api("GET /sentence-practice/session", "GET", "/sentence-practice/session?tz=" + encodeURIComponent(String(tzOffsetMinutes())), null)
+      .then(function (data) {
+        session = data.session;
+        renderSession();
+        if (!quiet) {
+          status(session ? "Loaded today’s session from the cloud." : "No session yet. Press Start when you are ready.");
+        }
+        return session;
+      });
+  }
+
+  function startSession() {
+    if (busy) { return; }
+    setBusy(true);
+    status("Preparing today’s sentence practice…");
+    startedAt = Date.now();
+
+    api("POST /sentence-practice/session", "POST", "/sentence-practice/session", {
+      timezoneOffsetMinutes: tzOffsetMinutes()
+    }).then(function (data) {
+      session = data.session;
+      cursor = firstUnanswered();
+      renderSession();
+      var msg = data.created
+        ? "New session ready. " + (data.aiCalls ? data.aiCalls + " AI request to write the exercises." : "")
+        : "Picked up the session already stored for today — nothing regenerated.";
+      status(msg.trim());
+    })["catch"](function (e) {
+      var data = e && e.data;
+      if (data && data.error === "no_daily_plan") {
+        status("Load today’s plan first — Sentence Practice follows the grammar targets it chose.");
+      } else if (data && data.error === "nothing_to_practise") {
+        status("Today’s Plan has no grammar target yet. Load it first.");
+      } else if (data && data.error === "sentence_content_unavailable") {
+        status(data.message || "Could not prepare the session right now. Try again in a moment.");
+      } else if (String(e && e.message).indexOf("HTTP") === 0) {
+        status("Failed. See the error above.");
+      } else {
+        status("Failed.");
+      }
+    })["then"](function () { setBusy(false); }, function () { setBusy(false); });
+  }
+
+  function firstUnanswered() {
+    if (!session) { return 0; }
+    for (var i = 0; i < session.exercises.length; i++) {
+      if (!session.exercises[i].attempted) { return i; }
+    }
+    return Math.max(0, session.exercises.length - 1);
+  }
+
+  function renderSession() {
+    var hasSession = !!(session && session.exercises && session.exercises.length);
+    el.intro.hidden = hasSession;
+    el.running.hidden = !hasSession;
+    el.summary.hidden = true;
+
+    if (!hasSession) {
+      el.progressChip.textContent = "—";
+      el.progressChip.className = "chip";
+      return;
+    }
+
+    var p = session.progress;
+    el.progressChip.textContent = p.attempted + "/" + p.required + " answered";
+    el.progressChip.className = "chip" + (p.readyToComplete ? " pass" : "");
+
+    var labels = [];
+    for (var i = 0; i < session.targets.length; i++) {
+      labels.push(session.targets[i].label + " (" + (session.targets[i].reason.en || "").replace(/\.$/, "") + ")");
+    }
+    el.targets.textContent = labels.join(" · ");
+
+    el.bar.style.width = (p.required > 0 ? Math.round((p.attempted / p.required) * 100) : 0) + "%";
+    el.rule.textContent = "To finish: " + p.rule;
+
+    if (session.status === "complete") {
+      renderCompleted();
+      return;
+    }
+
+    if (cursor >= session.exercises.length) { cursor = session.exercises.length - 1; }
+    renderExercise(session.exercises[cursor]);
+  }
+
+  function renderCompleted() {
+    clear(el.exercise);
+    el.exercise.appendChild(elem("p", "ex-kind", "Session complete"));
+    el.exercise.appendChild(elem("p", "ex-question", "Today’s sentence practice is done."));
+    el.feedback.hidden = true;
+    el.btnNext.hidden = true;
+    el.btnFinish.hidden = true;
+  }
+
+  function renderExercise(ex) {
+    clear(el.exercise);
+    el.feedback.hidden = true;
+    el.btnNext.hidden = true;
+    el.btnFinish.hidden = true;
+
+    var head = elem("p", "ex-kind",
+      "Question " + (cursor + 1) + " of " + session.exercises.length + " · " +
+      (TYPE_LABEL[ex.type] || ex.type) + (ex.reinforcement ? " · follow-up" : ""));
+    el.exercise.appendChild(head);
+
+    if (ex.prompt.instructionHe) {
+      el.exercise.appendChild(elem("p", "ex-instruction", ex.prompt.instructionHe));
+    }
+    el.exercise.appendChild(elem("p", "ex-question", ex.prompt.question));
+
+    if (ex.reinforcement) {
+      var chips = elem("div", "ai-chips");
+      chips.appendChild(elem("span", "chip", "Because of an earlier answer on " + ex.targetLabel));
+      el.exercise.appendChild(chips);
+    }
+
+    if (ex.prompt.format === "choice") {
+      renderChoice(ex);
+    } else {
+      renderText(ex);
+    }
+
+    if (ex.attempted) {
+      showFeedback(ex.correct, ex.feedback, ex);
+    }
+  }
+
+  function renderChoice(ex) {
+    var wrap = elem("div", "ex-options");
+    var buttons = [];
+    for (var i = 0; i < ex.prompt.options.length; i++) {
+      (function (value) {
+        var b = elem("button", "secondary", value);
+        b.type = "button";
+        b.setAttribute("aria-pressed", "false");
+        if (ex.attempted) { b.disabled = true; }
+        b.addEventListener("click", function () {
+          if (busy || ex.attempted) { return; }
+          for (var j = 0; j < buttons.length; j++) {
+            buttons[j].setAttribute("aria-pressed", buttons[j] === b ? "true" : "false");
+          }
+          submit(ex, value);
+        });
+        buttons.push(b);
+        wrap.appendChild(b);
+      }(ex.prompt.options[i]));
+    }
+    el.exercise.appendChild(wrap);
+  }
+
+  function renderText(ex) {
+    var wrap = elem("div", "ex-text");
+    var input;
+    if (ex.type === "free_sentence" || ex.type === "transformation") {
+      input = document.createElement("textarea");
+      input.style.minHeight = "84px";
+    } else {
+      input = document.createElement("input");
+      input.type = "text";
+    }
+    input.setAttribute("autocapitalize", "sentences");
+    input.setAttribute("autocorrect", "off");
+    input.setAttribute("spellcheck", "false");
+    input.placeholder = "Your answer";
+    if (ex.attempted) {
+      input.value = ex.learnerAnswer || "";
+      input.disabled = true;
+    }
+    wrap.appendChild(input);
+
+    var check = elem("button", null, "Check");
+    check.type = "button";
+    check.style.marginTop = "10px";
+    check.addEventListener("click", function () {
+      if (busy) { return; }
+      var v = String(input.value || "").trim();
+      if (!v) { status("Type an answer first."); return; }
+      submit(ex, v);
+    });
+    if (!ex.attempted) {
+      input.addEventListener("keydown", function (e) {
+        if (e.key === "Enter" && ex.type !== "free_sentence" && ex.type !== "transformation") {
+          e.preventDefault();
+          check.click();
+        }
+      });
+      wrap.appendChild(check);
+    }
+    el.exercise.appendChild(wrap);
+  }
+
+  function submit(ex, answer) {
+    if (busy) { return; }
+    setBusy(true);
+    status(ex.type === "free_sentence" || ex.type === "transformation" ? "Checking your sentence…" : "Checking…");
+
+    api("POST /sentence-practice/session/answer", "POST", "/sentence-practice/session/answer", {
+      exerciseId: ex.exerciseId,
+      answer: answer,
+      timezoneOffsetMinutes: tzOffsetMinutes()
+    }).then(function (data) {
+      session = data.session;
+      var updated = session.exercises[cursor];
+      renderExercise(updated);
+      showFeedback(data.correct, data.feedback, updated);
+      var p = session.progress;
+      el.progressChip.textContent = p.attempted + "/" + p.required + " answered";
+      el.progressChip.className = "chip" + (p.readyToComplete ? " pass" : "");
+      el.bar.style.width = (p.required > 0 ? Math.round((p.attempted / p.required) * 100) : 0) + "%";
+      status(data.evaluatedBy === "ai"
+        ? "Checked by the AI coach."
+        : (data.evaluatedBy === "ai_unavailable"
+            ? "Saved. The English itself could not be checked this time."
+            : "Saved to the cloud.") + (data.reinforcementAdded ? " One more question on this target has been added." : ""));
+    })["catch"](function () {
+      status("Failed. See the error above.");
+    })["then"](function () { setBusy(false); }, function () { setBusy(false); });
+  }
+
+  function showFeedback(correct, fb, ex) {
+    clear(el.feedback);
+    el.feedback.hidden = false;
+    el.feedback.className = "fb " + (correct ? "ok" : "no");
+
+    fb = fb || {};
+    el.feedback.appendChild(elem("div", "fb-head", fb.headlineHe || (correct ? "נכון." : "לא נכון.")));
+
+    if (fb.correctAnswer) {
+      var ca = elem("div", "fb-en");
+      ca.appendChild(elem("span", "fb-label", "Correct answer: "));
+      ca.appendChild(document.createTextNode(fb.correctAnswer));
+      el.feedback.appendChild(ca);
+    }
+    if (fb.correctedSentence) {
+      var cs = elem("div", "fb-en");
+      cs.appendChild(elem("span", "fb-label", "Better: "));
+      cs.appendChild(document.createTextNode(fb.correctedSentence));
+      el.feedback.appendChild(cs);
+    }
+    if (fb.explanationHe) {
+      el.feedback.appendChild(elem("div", "fb-he", fb.explanationHe));
+    }
+    if (fb.noticeHe) {
+      el.feedback.appendChild(elem("div", "fb-he", fb.noticeHe));
+    }
+    if (fb.betterAlternative) {
+      var alt = elem("div", "fb-en");
+      alt.appendChild(elem("span", "fb-label", "More natural: "));
+      alt.appendChild(document.createTextNode(fb.betterAlternative));
+      el.feedback.appendChild(alt);
+    }
+    if (fb.grammarNote && !correct) {
+      el.feedback.appendChild(elem("div", "fb-en", fb.grammarNote));
+    }
+
+    var more = cursor < session.exercises.length - 1;
+    el.btnNext.hidden = !more;
+    el.btnFinish.hidden = more || !session.progress.readyToComplete;
+    if (!more && !session.progress.readyToComplete) {
+      // Every active exercise has to be answered, including a follow-up that
+      // may have just been added, so send them back to the unanswered ones.
+      el.btnNext.textContent = "Go to the unanswered questions";
+      el.btnNext.hidden = false;
+    } else {
+      el.btnNext.textContent = "Next";
+    }
+  }
+
+  function next() {
+    if (!session) { return; }
+    if (cursor < session.exercises.length - 1) {
+      cursor++;
+    } else {
+      cursor = firstUnanswered();
+    }
+    renderExercise(session.exercises[cursor]);
+  }
+
+  function finish() {
+    if (busy || !session) { return; }
+    setBusy(true);
+    status("Finishing the session…");
+
+    var seconds = startedAt ? Math.round((Date.now() - startedAt) / 1000) : 0;
+    api("POST /sentence-practice/session/complete", "POST", "/sentence-practice/session/complete", {
+      durationSeconds: seconds,
+      timezoneOffsetMinutes: tzOffsetMinutes()
+    }).then(function (data) {
+      session = data.session;
+      renderSummary(data.summary, data.plan);
+      status(data.plan
+        ? "Session complete. Today’s Plan has been updated — it stays done on every device."
+        : "Practice complete.");
+      if (data.plan) {
+        document.dispatchEvent(new CustomEvent("english:plan-updated", { detail: { plan: data.plan } }));
+      }
+    })["catch"](function (e) {
+      var data = e && e.data;
+      if (data && data.error === "session_incomplete") {
+        status("Not finished yet: " + data.rule);
+        cursor = firstUnanswered();
+        renderSession();
+      } else {
+        status("Failed. See the error above.");
+      }
+    })["then"](function () { setBusy(false); }, function () { setBusy(false); });
+  }
+
+  function renderSummary(summary, plan) {
+    el.running.hidden = true;
+    el.intro.hidden = true;
+    clear(el.summary);
+    el.summary.hidden = false;
+
+    el.summary.appendChild(elem("p", "ex-kind", "Sentence Practice complete"));
+    el.summary.appendChild(elem("p", "ex-question", summary.itemsCorrect + " of " + summary.itemsAttempted + " correct"));
+
+    addSummaryGroup("Strong today", summary.strong);
+    addSummaryGroup("We’ll revisit", summary.needsWork);
+
+    el.summary.appendChild(elem(
+      "p",
+      "note",
+      "One session is not proof of mastery either way — this only reflects today."
+    ));
+    if (plan) {
+      el.summary.appendChild(elem("p", "note", "Sentence Practice is now marked complete in Today’s Plan."));
+    }
+  }
+
+  function addSummaryGroup(title, list) {
+    if (!list || !list.length) { return; }
+    var g = elem("div", "vocab-sum-group");
+    g.appendChild(elem("h3", null, title));
+    var ul = document.createElement("ul");
+    for (var i = 0; i < list.length; i++) {
+      var li = document.createElement("li");
+      li.textContent = list[i].label + " (" + list[i].correct + "/" + (list[i].correct + list[i].wrong) + ")";
+      ul.appendChild(li);
+    }
+    g.appendChild(ul);
+    el.summary.appendChild(g);
+  }
+
+  /* ---------------- init ---------------- */
+
+  function init() {
+    el.card = byId("spCard");
+    el.status = byId("spStatus");
+    el.error = byId("spError");
+    el.progressChip = byId("spProgressChip");
+    el.intro = byId("spIntro");
+    el.running = byId("spRunning");
+    el.summary = byId("spSummary");
+    el.targets = byId("spTargets");
+    el.bar = byId("spBar");
+    el.exercise = byId("spExercise");
+    el.feedback = byId("spFeedback");
+    el.btnNext = byId("btnSpNext");
+    el.btnFinish = byId("btnSpFinish");
+    el.rule = byId("spRule");
+
+    if (!el.card || !el.status || !el.exercise) { return; }
+
+    byId("btnSpStart").addEventListener("click", startSession);
+    el.btnNext.addEventListener("click", next);
+    el.btnFinish.addEventListener("click", finish);
+
+    /* Today's Plan asks this card to take over when the learner presses
+       Start on the Sentence Practice activity. */
+    document.addEventListener("english:open-sentence-practice", function () {
+      el.card.scrollIntoView({ behavior: "smooth", block: "start" });
+      if (session && session.exercises && session.exercises.length) {
+        renderSession();
+      } else {
+        startSession();
+      }
+    });
+
+    clearError();
 
     var cfg = config();
     if (!configProblem(cfg)) {

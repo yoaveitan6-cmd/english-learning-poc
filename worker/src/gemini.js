@@ -32,16 +32,25 @@
  *               and it shares nothing with the correction budget. Twenty a day
  *               is not a budget a daily lesson can live inside.
  *
- * Both are plain generateContent with a response schema; Flash-Lite is
- * documented as supporting structured outputs, which every prompt here relies
- * on. Neither is a paid-only model and nothing about billing changes.
+ *   sentencePractice  gemini-3.1-flash-lite   same reasoning as vocabulary: a
+ *               daily grammar session (one batched generation call, plus at
+ *               most a couple of free-text evaluation calls) is a volume the
+ *               correction budget cannot absorb. Kept as its own named role,
+ *               not folded into `vocabulary`, so the two purposes can be
+ *               retargeted independently later even though they currently
+ *               point at the same model.
  *
- * The env overrides exist so the model can be moved without a code change if a
- * name is retired. Neither is set in wrangler.toml, so the defaults apply.
+ * All three are plain generateContent with a response schema; Flash-Lite is
+ * documented as supporting structured outputs, which every prompt here relies
+ * on. None is a paid-only model and nothing about billing changes.
+ *
+ * The env overrides exist so a model can be moved without a code change if a
+ * name is retired. None is set in wrangler.toml, so the defaults apply.
  */
 export const MODELS = {
   correction: "gemini-3.8-flash",
-  vocabulary: "gemini-3.1-flash-lite"
+  vocabulary: "gemini-3.1-flash-lite",
+  sentencePractice: "gemini-3.1-flash-lite"
 };
 
 export const GEMINI_MODEL = MODELS.correction;
@@ -52,9 +61,16 @@ export const GEMINI_MAX_ATTEMPTS = 3;     // only a 503 "high demand" is retried
 export const GEMINI_RETRY_DELAYS_MS = [700, 1800];
 export const MAX_AI_FIELD_LEN = 1000;
 
+const ENV_OVERRIDE_BY_ROLE = {
+  correction: "GEMINI_MODEL",
+  vocabulary: "GEMINI_VOCAB_MODEL",
+  sentencePractice: "GEMINI_SENTENCE_MODEL"
+};
+
 /** The model for one role. Callers name the role; only this file names models. */
 export function modelFor(env, role) {
-  const override = role === "vocabulary" ? env.GEMINI_VOCAB_MODEL : env.GEMINI_MODEL;
+  const envKey = ENV_OVERRIDE_BY_ROLE[role] || "GEMINI_MODEL";
+  const override = env[envKey];
   const m = typeof override === "string" ? override.trim() : "";
   return m || MODELS[role] || MODELS.correction;
 }
@@ -67,6 +83,11 @@ export function geminiModel(env) {
 /** The vocabulary role — every /vocab/ purpose routes through here. */
 export function vocabularyModel(env) {
   return modelFor(env, "vocabulary");
+}
+
+/** The sentence-practice role — both its Gemini purposes route through here. */
+export function sentencePracticeModel(env) {
+  return modelFor(env, "sentencePractice");
 }
 
 /**
