@@ -103,6 +103,31 @@ async function seedNeedsWork(env, targetLabel, key = TEST_SYNC_KEY) {
   await call(req("POST", "/learning-targets/evidence", { body: { errors: [targetLabel], date: todayKey() }, key }), env);
 }
 
+/** Answers every currently-active exercise — including any reinforcement
+    exercise a miss along the way activates — so a test can reach a genuinely
+    completable session without hand-rolling the same two-pass loop. Set
+    `missFirst: true` to deliberately get the first exercise wrong (and
+    everything else right), which is what exercises the reinforcement path
+    and produces a mixed strong/needsWork summary. */
+async function completeAllExercises(env, session, { key = TEST_SYNC_KEY, missFirst = false } = {}) {
+  let latest = session;
+  let first = true;
+  for (;;) {
+    const pending = latest.exercises.filter((e) => !e.attempted);
+    if (!pending.length) break;
+    for (const ex of pending) {
+      const stored = storedAnswer(env, session.sessionKey, ex.exerciseId);
+      const good = stored.correctOption || stored.canonicalAnswer || "I have finished this exercise correctly.";
+      const answer = missFirst && first ? "definitely not the right answer at all" : good;
+      first = false;
+      const r = await call(req("POST", "/sentence-practice/session/answer", { body: { exerciseId: ex.exerciseId, answer }, key }), env);
+      assert.equal(r.res.status, 200, r.text);
+      latest = r.body.session;
+    }
+  }
+  return latest;
+}
+
 /* ---------------- planning / targets ---------------- */
 
 test("starting a session before Today's Plan exists is refused, not invented", async () => {
@@ -495,4 +520,139 @@ test("no response from this slice ever contains the API key or the pepper", asyn
   );
   assert.doesNotMatch(bad.text, new RegExp(env.GEMINI_API_KEY));
   assert.doesNotMatch(bad.text, new RegExp(env.SYNC_PEPPER));
+});
+
+/* ---------------- durable end-of-session summary ---------------- */
+/* Regression coverage for the bug where the rich completion summary (score,
+   strengths, "we'll revisit") was returned only once, by POST .../complete,
+   and vanished on the next GET. The fix reconstructs it in publicSession()
+   from the same persisted exercises/attempts every time, so these tests
+   drive the flow through a completion and then read it back repeatedly. */
+
+test("a completed session's summary survives a fresh GET, with the exact same numbers", async () => {
+  const env = makeEnv();
+  await withGeminiSentence(async () => {
+    await makePlan(env, "standard");
+    const start = await call(req("POST", "/sentence-practice/session", { body: {} }), env);
+    const session = await completeAllExercises(env, start.body.session, { missFirst: true });
+
+    const completeRes = await call(req("POST", "/sentence-practice/session/complete", { body: {} }), env);
+    assert.equal(completeRes.res.status, 200, completeRes.text);
+    assert.equal(completeRes.body.session.status, "complete");
+    assert.ok(completeRes.body.summary, "the complete response must carry the summary");
+    assert.deepEqual(completeRes.body.session.summary, completeRes.body.summary, "GET-shaped session.summary must match the top-level summary the same call returned");
+
+    const reload = await call(req("GET", "/sentence-practice/session"), env);
+    assert.equal(reload.body.exists, true);
+    assert.equal(reload.body.session.status, "complete");
+    assert.ok(reload.body.session.summary, "a fresh GET must still carry a summary, not just a bare 'done' status");
+    assert.deepEqual(reload.body.session.summary, completeRes.body.summary, "reloading must reproduce the exact same summary");
+
+    // A real mixed result: at least one strong target and one to revisit.
+    assert.ok(reload.body.session.summary.itemsAttempted > 0);
+    assert.ok(reload.body.session.summary.needsWork.length > 0, "the deliberately-missed target must show up as needing more work");
+  });
+});
+
+test("reading the completed summary is a pure read: zero Gemini calls, and learning-target counters never move", async () => {
+  const env = makeEnv();
+  await withGeminiSentence(async (g) => {
+    await makePlan(env, "standard");
+    const start = await call(req("POST", "/sentence-practice/session", { body: {} }), env);
+    const session = await completeAllExercises(env, start.body.session, { missFirst: true });
+    await call(req("POST", "/sentence-practice/session/complete", { body: {} }), env);
+
+    const targetsBefore = (await call(req("GET", "/learning-targets"), env)).body.targets;
+    const callsBefore = { generation: g.counts.sentenceGeneration, eval: g.counts.sentenceEval };
+
+    // Read the completed session three times, as a refresh, a relaunch and a
+    // second device all would.
+    for (let i = 0; i < 3; i++) {
+      const r = await call(req("GET", "/sentence-practice/session"), env);
+      assert.equal(r.res.status, 200);
+      assert.ok(r.body.session.summary);
+    }
+
+    assert.equal(g.counts.sentenceGeneration, callsBefore.generation, "viewing a saved summary must never call the generator");
+    assert.equal(g.counts.sentenceEval, callsBefore.eval, "viewing a saved summary must never call the evaluator");
+
+    const targetsAfter = (await call(req("GET", "/learning-targets"), env)).body.targets;
+    assert.deepEqual(targetsAfter, targetsBefore, "learning_target rows must be byte-for-byte unchanged by merely reading the summary");
+  });
+});
+
+test("repeated completion calls do not duplicate the session_summary ledger row or re-touch Today's Plan", async () => {
+  const env = makeEnv();
+  await withGeminiSentence(async () => {
+    await makePlan(env, "standard");
+    const start = await call(req("POST", "/sentence-practice/session", { body: {} }), env);
+    const session = await completeAllExercises(env, start.body.session);
+    const sessionKey = session.sessionKey;
+
+    await call(req("POST", "/sentence-practice/session/complete", { body: {} }), env);
+    await call(req("POST", "/sentence-practice/session/complete", { body: {} }), env);
+    await call(req("POST", "/sentence-practice/session/complete", { body: {} }), env);
+
+    const activityId = session.activityId;
+    const ledgerRows = env.DB.query(
+      "SELECT COUNT(*) AS n FROM session_summary WHERE session_id = ?",
+      todayKey() + ":" + activityId
+    );
+    assert.equal(ledgerRows[0].n, 1, "three completion calls must leave exactly one ledger row, not three");
+
+    const plan = (await call(req("GET", "/daily-plan"), env)).body.plan;
+    const activity = plan.activities.find((a) => a.type === "sentence_practice");
+    assert.equal(activity.status, "complete");
+  });
+});
+
+test("a second simulated device (same sync key) and a later relaunch both see the identical summary", async () => {
+  const env = makeEnv();
+  await withGeminiSentence(async () => {
+    await makePlan(env, "standard");
+    const start = await call(req("POST", "/sentence-practice/session", { body: {} }), env);
+    await completeAllExercises(env, start.body.session, { missFirst: true });
+    const done = await call(req("POST", "/sentence-practice/session/complete", { body: {} }), env);
+
+    const device2First = await call(req("GET", "/sentence-practice/session"), env);
+    const device2Second = await call(req("GET", "/sentence-practice/session"), env);
+    assert.deepEqual(device2First.body.session, device2Second.body.session);
+    assert.deepEqual(device2First.body.session.summary, done.body.summary);
+  });
+});
+
+test("a different sync key cannot read the completed summary", async () => {
+  const env = makeEnv();
+  await withGeminiSentence(async () => {
+    await makePlan(env, "standard");
+    const start = await call(req("POST", "/sentence-practice/session", { body: {} }), env);
+    await completeAllExercises(env, start.body.session);
+    await call(req("POST", "/sentence-practice/session/complete", { body: {} }), env);
+
+    const otherGet = await call(req("GET", "/sentence-practice/session", { key: OTHER_KEY }), env);
+    assert.equal(otherGet.body.exists, false);
+  });
+});
+
+test("the strong/needsWork split is deterministic and matches the persisted per-target outcomes", async () => {
+  const env = makeEnv();
+  await withGeminiSentence(async () => {
+    await makePlan(env, "standard");
+    const start = await call(req("POST", "/sentence-practice/session", { body: {} }), env);
+    const targetIds = start.body.session.targets.map((t) => t.id);
+    const session = await completeAllExercises(env, start.body.session, { missFirst: true });
+    const done = await call(req("POST", "/sentence-practice/session/complete", { body: {} }), env);
+
+    const strongIds = done.body.summary.strong.map((t) => t.id);
+    const needsWorkIds = done.body.summary.needsWork.map((t) => t.id);
+    // Every target that was touched lands in exactly one of the two buckets.
+    for (const id of [...strongIds, ...needsWorkIds]) {
+      assert.ok(targetIds.includes(id));
+    }
+    assert.equal(new Set([...strongIds, ...needsWorkIds]).size, strongIds.length + needsWorkIds.length, "no target appears in both buckets");
+
+    const reload = await call(req("GET", "/sentence-practice/session"), env);
+    assert.deepEqual(reload.body.session.summary.strong, done.body.summary.strong);
+    assert.deepEqual(reload.body.session.summary.needsWork, done.body.summary.needsWork);
+  });
 });

@@ -2529,6 +2529,18 @@
           chip.className = "chip pass";
           chip.textContent = "done";
           act.appendChild(chip);
+          if (a.type === "sentence_practice") {
+            // The finished session's summary is durable — reopening it reads
+            // the same persisted result rather than starting anything new.
+            var viewSp = document.createElement("button");
+            viewSp.type = "button";
+            viewSp.className = "mini";
+            viewSp.textContent = "View summary";
+            viewSp.addEventListener("click", function () {
+              document.dispatchEvent(new CustomEvent("english:open-sentence-practice"));
+            });
+            act.appendChild(viewSp);
+          }
         } else if (a.status === "skipped") {
           var skipped = document.createElement("span");
           skipped.className = "chip";
@@ -3780,7 +3792,15 @@
     el.rule.textContent = "To finish: " + p.rule;
 
     if (session.status === "complete") {
-      renderCompleted();
+      // The summary is durable: the Worker reconstructs it from the persisted
+      // exercises and attempts on every read, so it looks the same on first
+      // completion, after a refresh, and on another device. No Gemini call
+      // and no write happens just from viewing it.
+      if (session.summary) {
+        renderSummary(session.summary, false);
+      } else {
+        renderCompleted();
+      }
       return;
     }
 
@@ -3788,13 +3808,15 @@
     renderExercise(session.exercises[cursor]);
   }
 
+  /* Defensive fallback only — every completed session the Worker returns now
+     carries a `summary`, so this should not normally be reached. */
   function renderCompleted() {
-    clear(el.exercise);
-    el.exercise.appendChild(elem("p", "ex-kind", "Session complete"));
-    el.exercise.appendChild(elem("p", "ex-question", "Today’s sentence practice is done."));
-    el.feedback.hidden = true;
-    el.btnNext.hidden = true;
-    el.btnFinish.hidden = true;
+    el.running.hidden = true;
+    el.intro.hidden = true;
+    clear(el.summary);
+    el.summary.hidden = false;
+    el.summary.appendChild(elem("p", "ex-kind", "Session complete"));
+    el.summary.appendChild(elem("p", "ex-question", "Today’s sentence practice is done."));
   }
 
   function renderExercise(ex) {
@@ -3992,7 +4014,7 @@
       timezoneOffsetMinutes: tzOffsetMinutes()
     }).then(function (data) {
       session = data.session;
-      renderSummary(data.summary, data.plan);
+      renderSummary(data.summary, !!data.plan);
       status(data.plan
         ? "Session complete. Today’s Plan has been updated — it stays done on every device."
         : "Practice complete.");
@@ -4011,7 +4033,11 @@
     })["then"](function () { setBusy(false); }, function () { setBusy(false); });
   }
 
-  function renderSummary(summary, plan) {
+  /* Renders the end-of-session summary. `justCompleted` only changes the
+     wording of one note — the summary data itself comes from the same
+     Worker-computed object whether this is the moment of completion or a
+     reload of an already-completed session. */
+  function renderSummary(summary, justCompleted) {
     el.running.hidden = true;
     el.intro.hidden = true;
     clear(el.summary);
@@ -4028,9 +4054,13 @@
       "note",
       "One session is not proof of mastery either way — this only reflects today."
     ));
-    if (plan) {
-      el.summary.appendChild(elem("p", "note", "Sentence Practice is now marked complete in Today’s Plan."));
-    }
+    el.summary.appendChild(elem(
+      "p",
+      "note",
+      justCompleted
+        ? "Sentence Practice is now marked complete in Today’s Plan."
+        : "Saved to the cloud — this is the same summary on every device."
+    ));
   }
 
   function addSummaryGroup(title, list) {

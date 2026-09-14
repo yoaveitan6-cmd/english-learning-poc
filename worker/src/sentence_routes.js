@@ -188,9 +188,19 @@ function reasonForTarget(t) {
   return { en: "Observed once recently.", he: "נצפתה טעות אחת לאחרונה." };
 }
 
-/** Never includes the stored `answer` column. Before an exercise is attempted
-    the browser gets only what it needs to ask the question; the correct
-    answer arrives solely through the feedback object once answered. */
+/**
+ * Never includes the stored `answer` column. Before an exercise is attempted
+ * the browser gets only what it needs to ask the question; the correct
+ * answer arrives solely through the feedback object once answered.
+ *
+ * For a completed session this also reconstructs the end-of-session summary
+ * from the persisted exercises and attempts — the same summariseSession()
+ * call completeSession() made at the moment of completion, over the same
+ * rows, which is what makes GET after a refresh, a relaunch, or a second
+ * device show the identical summary rather than a bare "done" placeholder.
+ * Purely a read: no evidence is recomputed, no Gemini call is made, and
+ * nothing is written to D1.
+ */
 function publicSession(stored) {
   const row = stored.row;
   const attemptsById = new Map();
@@ -218,7 +228,8 @@ function publicSession(stored) {
   });
 
   const completion = evaluateCompletion(stored.exercises, stored.attempts);
-  const targets = safeJsonArray(row.targets).map(function (t) {
+  const rawTargets = safeJsonArray(row.targets);
+  const targets = rawTargets.map(function (t) {
     return Object.assign({}, t, { reason: reasonForTarget(t) });
   });
 
@@ -241,6 +252,10 @@ function publicSession(stored) {
     },
     ai: { state: row.aiState, note: row.aiNote },
     exercises: exercises,
+    // Durable, not a one-time payload: computed fresh from the same persisted
+    // rows every time, so it is identical on a refresh, a relaunch, or the
+    // learner's other device, without a second Gemini call or another write.
+    summary: row.status === "complete" ? summariseSession(rawTargets, stored.exercises, stored.attempts) : null,
     completedAt: row.completedAt === null || row.completedAt === undefined ? null : Number(row.completedAt)
   };
 }
