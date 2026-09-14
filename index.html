@@ -458,6 +458,55 @@
     padding: 8px 10px;
     margin: 0;
   }
+
+  /* ---- Devices (pairing) ---- */
+  #deviceCard { border-color: #c9d8f4; }
+  #deviceError {
+    font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    background: var(--fail-bg);
+    color: var(--fail-ink);
+    border: 1px solid #f3c9c9;
+    border-radius: 10px;
+    padding: 10px;
+    max-height: 200px;
+    overflow-y: auto;
+    margin: 0;
+  }
+  #deviceError[hidden], #deviceConnectPane[hidden], #deviceConnectedPane[hidden],
+  #devicePairPane[hidden], #btnPairStart[hidden], #deviceLegacyNote[hidden] { display: none; }
+  .device-h3 { font-size: 15px; margin: 0; font-weight: 650; }
+  input.pair-input {
+    font: 600 24px/1.2 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    text-align: center;
+  }
+  input.pair-input::placeholder { color: #b3b9c4; letter-spacing: 0.12em; }
+  .pair-box {
+    background: #f2f5fb;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 14px;
+  }
+  .pair-code {
+    font: 700 36px/1.15 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    letter-spacing: 0.14em;
+    text-align: center;
+    margin: 4px 0 0;
+    overflow-wrap: anywhere;
+    user-select: all;
+    -webkit-user-select: all;
+  }
+  .pair-code.expired { color: var(--muted); text-decoration: line-through; }
+  .pair-expiry { text-align: center; font-size: 14px; color: var(--muted); margin: 0; font-variant-numeric: tabular-nums; }
+  .pair-actions { display: flex; gap: 8px; }
+  .pair-actions button { flex: 1 1 0; min-height: 44px; padding: 8px 6px; font-size: 14px; }
+  #deviceCard .vocab-row .en .chip { vertical-align: 2px; }
+  details > summary { cursor: pointer; font-size: 14px; color: var(--ink); font-weight: 600; padding: 4px 0; }
+  details[open] > summary { margin-bottom: 8px; }
+  details.legacy > summary { color: var(--muted); font-weight: 500; }
 </style>
 </head>
 <body>
@@ -466,14 +515,83 @@
   <h1>English Learning HTML POC</h1>
   <p class="sub">Browser-native microphone, speech recognition and speech synthesis check. Nothing is sent anywhere by this page.</p>
 
+  <!-- ================= Devices =================
+       How this browser is connected to the learner's account.
+
+         Not connected  enter the short one-time code another device shows.
+                        The Worker returns this device's own key, stored only
+                        in this browser — no Worker URL, no long sync key.
+         Connected      pair another device, see and remove paired devices.
+
+       Every other card authenticates through the shared ElpAuth script, so
+       once this card connects the device, all of them work.
+       ============================================ -->
+  <div class="card stack" id="deviceCard">
+    <div class="today-head">
+      <h2>Devices</h2>
+      <span id="deviceChip" class="chip">&mdash;</span>
+    </div>
+
+    <p class="status" id="deviceStatus" style="margin-top:0">Checking this device&rsquo;s connection&hellip;</p>
+    <pre id="deviceError" hidden>&mdash;</pre>
+
+    <!-- ---------- not connected ---------- -->
+    <div id="deviceConnectPane" class="stack" hidden>
+      <h3 class="device-h3">Connect this device</h3>
+      <p class="note" style="margin-top:0">
+        On a device that is already connected, open <strong>Devices</strong> and press
+        <strong>Pair another device</strong>. Then enter the code it shows here.
+      </p>
+      <div>
+        <label for="devicePairCode">Pairing code</label>
+        <input id="devicePairCode" class="pair-input" type="text" inputmode="text" autocomplete="off"
+               autocapitalize="characters" autocorrect="off" spellcheck="false" maxlength="12"
+               placeholder="AB7K-3M9Q" aria-describedby="deviceStatus">
+      </div>
+      <div>
+        <label for="deviceLabel">Name for this device (optional)</label>
+        <input id="deviceLabel" type="text" maxlength="40" autocomplete="off" autocorrect="off"
+               spellcheck="false" placeholder="e.g. iPhone">
+      </div>
+      <button id="btnDeviceConnect" type="button">Connect</button>
+    </div>
+
+    <!-- ---------- connected ---------- -->
+    <div id="deviceConnectedPane" class="stack" hidden>
+      <button id="btnPairStart" type="button">Pair another device</button>
+
+      <div id="devicePairPane" class="pair-box stack" hidden>
+        <p class="note" style="margin-top:0">Open this app on your other device and enter this code.</p>
+        <p class="pair-code" id="devicePairCodeShown" aria-live="polite">&mdash;</p>
+        <p class="pair-expiry" id="devicePairExpiry">&mdash;</p>
+        <div class="pair-actions">
+          <button id="btnPairCopy" class="secondary" type="button">Copy code</button>
+          <button id="btnPairNew" class="secondary" type="button">New code</button>
+          <button id="btnPairCancel" class="secondary" type="button">Cancel</button>
+        </div>
+      </div>
+
+      <details id="deviceManage">
+        <summary>Connected devices</summary>
+        <div class="stack">
+          <div id="deviceList"></div>
+          <p class="note" id="deviceLegacyNote" hidden>
+            This device itself is connected with the legacy sync key (see Advanced at the bottom of the page),
+            so it does not appear in this list.
+          </p>
+        </div>
+      </details>
+    </div>
+  </div>
+
   <!-- ================= Today's Plan =================
        The first real product view, as opposed to the technical POC cards
        below it. It proves the learning engine end to end: the plan is built by
        the Worker's deterministic planner (no AI call), stored in D1, and the
-       same on every device using the same sync key.
+       same on every device connected to the same account.
 
-       It reuses the Worker URL and sync key from the Cloud sync test card, so
-       there is exactly one place to configure and one identity in play.
+       It authenticates through the shared ElpAuth script, so there is exactly
+       one place that knows how this device is connected and one identity in play.
        ================================================ -->
   <div class="card stack" id="todayCard">
     <div class="today-head">
@@ -494,7 +612,7 @@
     <button id="btnTodayLoad" type="button">Load / create today&rsquo;s plan</button>
     <button id="btnTodayReplan" class="secondary" type="button">Replan today (explicit)</button>
 
-    <p class="status" id="todayStatus">Idle. Save your Worker URL and sync key below first, then press Load.</p>
+    <p class="status" id="todayStatus">Idle. Connect this device first (Devices, above), then press Load.</p>
     <pre id="todayError" hidden>&mdash;</pre>
 
     <div id="todayPlan" hidden>
@@ -531,9 +649,9 @@
                    entry, and the approval queue for words other modules will
                    suggest in a later slice.
 
-       Like every other section it is its own IIFE reading the Worker URL and
-       sync key from the Cloud sync card, so there is one identity in play and a
-       failure here cannot take down the speech tests.
+       Like every other section it is its own IIFE authenticating through the
+       shared ElpAuth script, so there is one identity in play and a failure
+       here cannot take down the speech tests.
        ============================================== -->
   <div class="card stack" id="vocabCard">
     <div class="today-head">
@@ -546,7 +664,7 @@
       <button type="button" class="secondary" id="btnTabLibrary" aria-pressed="false">My words</button>
     </div>
 
-    <p class="status" id="vocabStatus">Idle. Save your Worker URL and sync key below first.</p>
+    <p class="status" id="vocabStatus">Idle. Connect this device first (Devices, at the top).</p>
     <pre id="vocabError" hidden>&mdash;</pre>
 
     <!-- ---------- session pane ---------- -->
@@ -634,9 +752,9 @@
        to write CONTENT for the targets already chosen (one batched call per
        day) and, when genuinely needed, to judge an open-ended answer.
 
-       Like every other section it is its own IIFE reading the Worker URL and
-       sync key from the Cloud sync card, so there is one identity in play and
-       a failure here cannot take down the other cards.
+       Like every other section it is its own IIFE authenticating through the
+       shared ElpAuth script, so there is one identity in play and a failure
+       here cannot take down the other cards.
        ================================================ -->
   <div class="card stack" id="spCard">
     <div class="today-head">
@@ -644,7 +762,7 @@
       <span id="spProgressChip" class="chip">&mdash;</span>
     </div>
 
-    <p class="status" id="spStatus">Idle. Save your Worker URL and sync key below first.</p>
+    <p class="status" id="spStatus">Idle. Connect this device first (Devices, at the top).</p>
     <pre id="spError" hidden>&mdash;</pre>
 
     <div id="spIntro">
@@ -684,39 +802,49 @@
   </div>
 
   <div class="card stack" id="syncCard">
-    <h2>Cloud sync test (Cloudflare Workers + D1)</h2>
+    <h2>Cloud sync debugging (Cloudflare Workers + D1)</h2>
     <p class="note" style="margin-top:0">
       Storage and cross-device sync check only. This section does not touch the microphone
       or speech tests above. The list at the bottom is always fetched from the server —
-      it is never read from this browser's storage.
+      it is never read from this browser's storage. It uses the same connection as the rest
+      of the app (Devices, at the top).
     </p>
 
-    <hr class="divider">
+    <details id="legacySyncDetails" class="legacy">
+      <summary>Advanced / legacy sync debugging</summary>
+      <div class="stack">
+        <p class="note">
+          You do not need this to connect a device — use <strong>Devices &rarr; Connect this device</strong>
+          with a pairing code instead. These controls are kept for recovery and debugging only.
+          While this device has its own paired key, that key is always used and anything saved here is ignored.
+        </p>
 
-    <div>
-      <label for="syncApi">Worker URL — public configuration, pre-filled. Editable for debugging.</label>
-      <input id="syncApi" type="url" inputmode="url" autocomplete="off" autocapitalize="off"
-             autocorrect="off" spellcheck="false"
-             placeholder="https://english-sync.YOUR-SUBDOMAIN.workers.dev">
-    </div>
+        <div>
+          <label for="syncApi">Worker URL — public configuration, pre-filled. Editable for debugging.</label>
+          <input id="syncApi" type="url" inputmode="url" autocomplete="off" autocapitalize="off"
+                 autocorrect="off" spellcheck="false"
+                 placeholder="https://english-sync.YOUR-SUBDOMAIN.workers.dev">
+        </div>
 
-    <div>
-      <label for="syncKey">Private sync key — at least 20 characters, same on every device</label>
-      <input id="syncKey" type="text" autocomplete="off" autocapitalize="off"
-             autocorrect="off" spellcheck="false"
-             placeholder="Paste your key, or press Generate below">
-    </div>
+        <div>
+          <label for="syncKey">Legacy private sync key — at least 20 characters</label>
+          <input id="syncKey" type="text" autocomplete="off" autocapitalize="off"
+                 autocorrect="off" spellcheck="false"
+                 placeholder="Paste a legacy key, or press Generate below">
+        </div>
 
-    <button id="btnGenKey" class="secondary" type="button">Generate a new strong key</button>
-    <button id="btnSaveKey" type="button">Save URL and key on this device</button>
-    <button id="btnForgetKey" class="secondary" type="button">Forget them on this device</button>
-    <p class="note">
-      The Worker URL above is public and safe to publish. The <strong>sync key is not</strong>:
-      it is stored only in this browser's localStorage and sent to the Worker in the
-      <code>X-Sync-Key</code> header, which hashes it and stores only the hash. It is never
-      committed to GitHub. Anyone holding this key can read your words, so keep it private.
-      Use the same key on every device you want to sync.
-    </p>
+        <button id="btnGenKey" class="secondary" type="button">Generate a new strong key</button>
+        <button id="btnSaveKey" type="button">Save URL and key on this device</button>
+        <button id="btnForgetKey" class="secondary" type="button">Forget them on this device</button>
+        <p class="note">
+          The Worker URL above is public and safe to publish. The <strong>sync key is not</strong>:
+          it is stored only in this browser's localStorage and sent to the Worker in the
+          <code>X-Sync-Key</code> header, which hashes it and stores only the hash. It is never
+          committed to GitHub. Anyone holding this key can read your words, so keep it private.
+          &ldquo;Forget&rdquo; removes only the legacy key; it does not disconnect a paired device.
+        </p>
+      </div>
+    </details>
 
     <hr class="divider">
 
@@ -749,8 +877,8 @@
     <p class="note" style="margin-top:0">
       Sends one English sentence to the same Cloudflare Worker, which asks Gemini for
       structured feedback and returns it. The browser never talks to Google directly and
-      never holds an AI key. This section uses the Worker URL and private sync key from the
-      Cloud sync test above — nothing extra to configure. Nothing here is saved to D1.
+      never holds an AI key. This section uses this device's connection (Devices, at the
+      top) — nothing extra to configure. Nothing here is saved to D1.
     </p>
 
     <hr class="divider">
@@ -1486,6 +1614,218 @@
 })();
 </script>
 
+<script id="elp-auth">
+/* ------------------------------------------------------------------
+   ElpAuth — the one place that knows how this browser is connected.
+
+   Every card that talks to the Worker asks this for the base URL and
+   the auth headers, so no card knows there are two credentials:
+
+     1. this device's own DEVICE KEY, issued once by pairing
+        (localStorage "elp.device.credential") — preferred
+     2. the legacy shared sync key ("elp.sync.key", or the Advanced
+        field while it is being typed) — only when there is no device key
+
+   Exactly one header is ever sent. A stale or wrong legacy key can never
+   override a device key, and a device paired with a code needs no sync
+   key at all.
+
+   The device key is never shown in the UI. It is sent only in the
+   X-Device-Key header — never in a URL.
+
+   Storage is per browser context: Safari, Chrome, an in-app browser and
+   a Home Screen app each keep their own, so each is paired on its own.
+   ------------------------------------------------------------------ */
+(function (root) {
+  "use strict";
+
+  /* Public configuration, not a secret — it grants nobody access. */
+  var DEFAULT_API_BASE = "https://english-sync.yoaveitan-english.workers.dev";
+  var LS_API = "elp.sync.apiBase";
+  var LS_SYNC_KEY = "elp.sync.key";
+  var LS_DEVICE = "elp.device.credential";
+  var MIN_SYNC_KEY_LEN = 20;
+  var DEVICE_KEY_RE = /^dk_[A-Za-z0-9_-]{43}$/;
+  /* Must match PAIRING_CODE_ALPHABET / PAIRING_CODE_LENGTH in worker/src/auth.js. */
+  var CODE_ALPHABET = "23456789ABCDEFGHJKMNPQRSTUVWXYZ";
+  var CODE_LENGTH = 8;
+
+  function storage() {
+    try { return root.localStorage || null; } catch (e) { return null; }
+  }
+  function read(k) {
+    var s = storage();
+    if (!s) { return ""; }
+    try { return s.getItem(k) || ""; } catch (e) { return ""; }
+  }
+  function write(k, v) {
+    var s = storage();
+    if (!s) { return false; }
+    try { s.setItem(k, v); return true; } catch (e) { return false; }
+  }
+  function remove(k) {
+    var s = storage();
+    if (!s) { return; }
+    try { s.removeItem(k); } catch (e) { /* ignore */ }
+  }
+  function field(id) {
+    try {
+      var node = root.document && root.document.getElementById(id);
+      return node ? String(node.value || "").trim() : "";
+    } catch (e) {
+      return "";
+    }
+  }
+
+  function readDevice() {
+    var raw = read(LS_DEVICE);
+    if (!raw) { return null; }
+    try {
+      var o = JSON.parse(raw);
+      if (o && typeof o.key === "string" && DEVICE_KEY_RE.test(o.key)) { return o; }
+    } catch (e) { /* unreadable -> not connected */ }
+    return null;
+  }
+
+  function legacySyncKey() {
+    return field("syncKey") || read(LS_SYNC_KEY);
+  }
+
+  function getApiBase() {
+    return String(field("syncApi") || read(LS_API) || DEFAULT_API_BASE).trim().replace(/\/+$/, "");
+  }
+
+  function authMethod() {
+    if (readDevice()) { return "device_key"; }
+    var k = legacySyncKey();
+    return k && k.length >= MIN_SYNC_KEY_LEN ? "sync_key" : null;
+  }
+
+  /* A fresh object every call, so a caller may add Content-Type to it. */
+  function getAuthHeaders() {
+    var d = readDevice();
+    if (d) { return { "X-Device-Key": d.key }; }
+    var k = legacySyncKey();
+    if (k && k.length >= MIN_SYNC_KEY_LEN) { return { "X-Sync-Key": k }; }
+    return {};
+  }
+
+  function authProblem() {
+    if (!/^https?:\/\//i.test(getApiBase())) {
+      return "Worker URL must start with https:// (see Advanced / legacy sync debugging).";
+    }
+    if (readDevice()) { return null; }
+    var k = legacySyncKey();
+    if (!k) { return "This device is not connected yet. Use “Connect this device” at the top of the page."; }
+    if (k.length < MIN_SYNC_KEY_LEN) {
+      return "The legacy sync key is only " + k.length + " characters. At least " + MIN_SYNC_KEY_LEN + " are required.";
+    }
+    return null;
+  }
+
+  function hasAuth() { return authProblem() === null; }
+
+  function notify(name) {
+    try { root.document.dispatchEvent(new root.CustomEvent(name)); } catch (e) { /* ignore */ }
+  }
+
+  /* Stores the key and reads it back: a browser that silently refuses
+     storage (private mode) must not be reported as connected. */
+  function saveDeviceCredential(cred) {
+    if (!cred || typeof cred.deviceKey !== "string" || !DEVICE_KEY_RE.test(cred.deviceKey)) { return false; }
+    var record = {
+      v: 1,
+      key: cred.deviceKey,
+      deviceId: String(cred.deviceId || ""),
+      label: String(cred.label || ""),
+      connectedAt: Date.now()
+    };
+    if (!write(LS_DEVICE, JSON.stringify(record))) { return false; }
+    var back = readDevice();
+    if (!back || back.key !== cred.deviceKey) { remove(LS_DEVICE); return false; }
+    notify("english:auth-changed");
+    return true;
+  }
+
+  function clearDeviceCredential() {
+    remove(LS_DEVICE);
+    notify("english:auth-changed");
+  }
+
+  /* Everything about this device except the secret itself. */
+  function getDeviceInfo() {
+    var d = readDevice();
+    return d ? { deviceId: d.deviceId || "", label: d.label || "", connectedAt: d.connectedAt || 0 } : null;
+  }
+
+  function normalizePairingCode(input) {
+    if (typeof input !== "string" || input.length > 32) { return null; }
+    var code = input.toUpperCase().replace(/[\s-]+/g, "");
+    if (code.length !== CODE_LENGTH) { return null; }
+    for (var i = 0; i < code.length; i++) {
+      if (CODE_ALPHABET.indexOf(code.charAt(i)) === -1) { return null; }
+    }
+    return code;
+  }
+
+  /* Cards call this with every HTTP status they get. A 401 while using a
+     device key means the connection may have been revoked. */
+  function reportStatus(status) {
+    if (status === 401) { notify("english:auth-rejected"); }
+  }
+
+  /**
+   * The new device's half of pairing. Deliberately sends NO auth header —
+   * the code is the only thing that identifies the account — and resolves
+   * to { ok, status, data, stored }.
+   */
+  function claimPairingCode(code, label) {
+    var normalized = normalizePairingCode(code);
+    if (!normalized) {
+      return Promise.resolve({ ok: false, status: 0, data: { error: "bad_format" }, stored: false });
+    }
+    return root.fetch(getApiBase() + "/pairing/claim", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code: normalized, label: String(label || "").trim().slice(0, 40) }),
+      mode: "cors",
+      cache: "no-store",
+      credentials: "omit"
+    }).then(function (res) {
+      return res.text().then(function (text) {
+        var data = null;
+        try { data = JSON.parse(text); } catch (e) { data = null; }
+        if (!res.ok || !data || typeof data.deviceKey !== "string") {
+          return { ok: false, status: res.status, data: data, stored: false };
+        }
+        var stored = saveDeviceCredential({
+          deviceKey: data.deviceKey,
+          deviceId: data.device && data.device.id,
+          label: data.device && data.device.label
+        });
+        // The raw key leaves this function only by being stored.
+        return { ok: stored, status: res.status, data: { device: data.device }, stored: stored };
+      });
+    });
+  }
+
+  root.ElpAuth = Object.freeze({
+    DEFAULT_API_BASE: DEFAULT_API_BASE,
+    getApiBase: getApiBase,
+    getAuthHeaders: getAuthHeaders,
+    hasAuth: hasAuth,
+    authMethod: authMethod,
+    authProblem: authProblem,
+    saveDeviceCredential: saveDeviceCredential,
+    clearDeviceCredential: clearDeviceCredential,
+    getDeviceInfo: getDeviceInfo,
+    normalizePairingCode: normalizePairingCode,
+    claimPairingCode: claimPairingCode,
+    reportStatus: reportStatus
+  });
+})(window);
+</script>
+
 <script>
 /* ------------------------------------------------------------------
    Cloud sync test — Cloudflare Workers + D1.
@@ -1617,20 +1957,21 @@
     btnRefresh.disabled = v;
   }
 
-  /* One place for every network call, so error reporting is identical everywhere. */
+  /* One place for every network call, so error reporting is identical everywhere.
+     The fields above are only for saving a legacy key; the request itself is
+     authenticated by ElpAuth, which prefers this device's paired key. */
   function api(operation, method, path, bodyObj) {
-    var cfg = config();
-    var problem = configProblem(cfg);
+    var problem = window.ElpAuth.authProblem();
     if (problem) {
       showError(operation, ["Configuration problem: " + problem]);
       status("Not configured.");
       return Promise.reject(new Error(problem));
     }
 
-    var url = cfg.base + path;
+    var url = window.ElpAuth.getApiBase() + path;
     var init = {
       method: method,
-      headers: { "X-Sync-Key": cfg.key },
+      headers: window.ElpAuth.getAuthHeaders(),
       mode: "cors",
       cache: "no-store",
       credentials: "omit"
@@ -1643,6 +1984,7 @@
     var started = Date.now();
 
     return fetch(url, init).then(function (res) {
+      window.ElpAuth.reportStatus(res.status);
       return res.text().then(function (text) {
         var elapsed = Date.now() - started;
         var parsed = null;
@@ -1919,12 +2261,14 @@
     apiEl.value = savedApi || DEFAULT_API_BASE;
     if (savedKey) { keyEl.value = savedKey; }
 
-    if (savedKey) {
-      status("Sync key loaded from this device. Fetching from Cloudflare D1…");
+    if (window.ElpAuth.hasAuth()) {
+      status(window.ElpAuth.authMethod() === "device_key"
+        ? "Connected with this device's own key. Fetching from Cloudflare D1…"
+        : "Legacy sync key loaded from this device. Fetching from Cloudflare D1…");
       refresh();
     } else {
-      status("Worker URL is pre-filled. Enter your private sync key — or press Generate "
-             + "if this is your first device — then press Save.");
+      status("Not connected. Use “Connect this device” at the top of the page. "
+             + "(A legacy sync key can still be entered under Advanced.)");
     }
   }
 
@@ -1945,22 +2289,18 @@
    AI correction test — browser -> Cloudflare Worker -> Gemini.
 
    A third, separate IIFE. It touches neither the speech tests nor the
-   sync code: it only READS the Worker URL and sync key that the sync
-   card already manages, so there is one place to configure and one
-   private key, never a second one.
+   sync code: it authenticates through the shared ElpAuth script, so
+   there is one place that knows how this device is connected and never
+   a second credential.
 
    The browser never sees a Gemini key. It calls POST /ai/correct on
-   the Worker with the same X-Sync-Key header the sync endpoints use,
-   and the Worker holds GEMINI_API_KEY as a Cloudflare secret.
+   the Worker with the same auth header every other card uses, and the
+   Worker holds GEMINI_API_KEY as a Cloudflare secret.
    ------------------------------------------------------------------ */
 (function () {
   "use strict";
 
-  var LS_API = "elp.sync.apiBase";
-  var LS_KEY = "elp.sync.key";
-  var MIN_KEY_LEN = 20;
   var MAX_SENTENCE_LEN = 300;   // must match MAX_SENTENCE_LEN in the Worker
-  var DEFAULT_API_BASE = "https://english-sync.yoaveitan-english.workers.dev";
   var DEFAULT_SENTENCE = "Yesterday I go to the store.";
 
   var sentenceEl, btn, statusEl, errorEl, resultEl;
@@ -1994,31 +2334,14 @@
     }
   }
 
-  function readStore(k) {
-    try { return window.localStorage.getItem(k) || ""; } catch (e) { return ""; }
-  }
-
-  function fieldValue(id) {
-    var el = byId(id);
-    return el ? String(el.value || "").trim() : "";
-  }
-
-  /* Read straight from the sync card when it is on the page, so a key that has
-     been typed but not yet saved still works. localStorage is the fallback. */
+  /* ElpAuth decides how this device is connected (its own paired key, or the
+     legacy sync key — including one typed but not yet saved). */
   function config() {
-    var base = fieldValue("syncApi") || readStore(LS_API) || DEFAULT_API_BASE;
-    var key = fieldValue("syncKey") || readStore(LS_KEY);
-    return { base: String(base).replace(/\/+$/, ""), key: key };
+    return { base: window.ElpAuth.getApiBase(), headers: window.ElpAuth.getAuthHeaders() };
   }
 
-  function configProblem(cfg) {
-    if (!cfg.base) { return "Worker URL is empty. Fill it in the Cloud sync test above."; }
-    if (!/^https?:\/\//i.test(cfg.base)) { return "Worker URL must start with https://"; }
-    if (!cfg.key) { return "Sync key is empty. Set it in the Cloud sync test above (Generate, then Save)."; }
-    if (cfg.key.length < MIN_KEY_LEN) {
-      return "Sync key is only " + cfg.key.length + " characters. At least " + MIN_KEY_LEN + " are required.";
-    }
-    return null;
+  function configProblem() {
+    return window.ElpAuth.authProblem();
   }
 
   function setBusy(v) {
@@ -2166,14 +2489,18 @@
     setBusy(true);
     status("Asking the Worker… this usually takes a few seconds.");
 
+    var headers = cfg.headers;
+    headers["Content-Type"] = "application/json";
+
     fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "X-Sync-Key": cfg.key },
+      headers: headers,
       body: JSON.stringify({ sentence: sentence }),
       mode: "cors",
       cache: "no-store",
       credentials: "omit"
     }).then(function (res) {
+      window.ElpAuth.reportStatus(res.status);
       return res.text().then(function (text) {
         var elapsed = Date.now() - started;
         var parsed = null;
@@ -2182,7 +2509,7 @@
         if (!res.ok) {
           var hint = "";
           if (res.status === 401) {
-            hint = "The Worker refused the sync key. Check the key in the Cloud sync test above.";
+            hint = "The Worker refused this device's connection. Reconnect it under Devices at the top of the page.";
           } else if (res.status === 429) {
             hint = "The Gemini free-tier quota is exhausted for now. Wait a minute and try again.";
           } else if (res.status === 504) {
@@ -2275,9 +2602,9 @@
    Its own IIFE, like every other section, so a failure here cannot take
    down the microphone, speech, sync or AI cards. Nothing above is edited.
 
-   It deliberately reads the Worker URL and sync key straight out of the
-   Cloud sync card's inputs rather than keeping a second copy: one place
-   to configure, one identity, no chance of the two drifting apart.
+   It authenticates through the shared ElpAuth script rather than keeping
+   its own copy of any credential: one place that knows how this device is
+   connected, one identity, no chance of the two drifting apart.
 
    The plan itself is never cached in this browser. D1 is the single
    source of truth, which is exactly what makes "same plan on the Mac and
@@ -2287,7 +2614,6 @@
 (function () {
   "use strict";
 
-  var MIN_KEY_LEN = 20;
   var MODES = { quick: "Quick", standard: "Standard", full: "Full" };
 
   var statusEl, errorEl, planEl, actsEl, whyEl, progressEl;
@@ -2313,23 +2639,14 @@
     errorEl.hidden = false;
   }
 
+  /* ElpAuth decides how this device is connected (its own paired key, or the
+     legacy sync key). Exactly one auth header comes back. */
   function config() {
-    var apiEl = byId("syncApi");
-    var keyEl = byId("syncKey");
-    return {
-      base: String((apiEl && apiEl.value) || "").trim().replace(/\/+$/, ""),
-      key: String((keyEl && keyEl.value) || "").trim()
-    };
+    return { base: window.ElpAuth.getApiBase(), headers: window.ElpAuth.getAuthHeaders() };
   }
 
-  function configProblem(cfg) {
-    if (!cfg.base) { return "Worker URL is empty. Fill it in the Cloud sync card and press Save."; }
-    if (!/^https?:\/\//i.test(cfg.base)) { return "Worker URL must start with https://"; }
-    if (!cfg.key) { return "Sync key is empty. Press Generate in the Cloud sync card, then Save."; }
-    if (cfg.key.length < MIN_KEY_LEN) {
-      return "Sync key is only " + cfg.key.length + " characters. At least " + MIN_KEY_LEN + " are required.";
-    }
-    return null;
+  function configProblem() {
+    return window.ElpAuth.authProblem();
   }
 
   function setBusy(v) {
@@ -2350,7 +2667,7 @@
 
     var init = {
       method: method,
-      headers: { "X-Sync-Key": cfg.key },
+      headers: cfg.headers,
       mode: "cors",
       cache: "no-store",
       credentials: "omit"
@@ -2362,6 +2679,7 @@
 
     var started = Date.now();
     return fetch(cfg.base + path, init).then(function (res) {
+      window.ElpAuth.reportStatus(res.status);
       return res.text().then(function (text) {
         var elapsed = Date.now() - started;
         var data = null;
@@ -2736,9 +3054,9 @@
    Its own IIFE, like every other section, so a failure here cannot take
    down the microphone, speech, sync, AI or Today's Plan cards.
 
-   It reads the Worker URL and sync key straight out of the Cloud sync
-   card's inputs, exactly as Today's Plan does: one place to configure,
-   one identity, no chance of the two drifting apart.
+   It authenticates through the shared ElpAuth script, exactly as Today's
+   Plan does: one place that knows how this device is connected, one
+   identity, no chance of the two drifting apart.
 
    No learning state is cached in this browser. Every question, every
    answer and every word comes from D1 on each request, which is what
@@ -2751,8 +3069,6 @@
    ------------------------------------------------------------------ */
 (function () {
   "use strict";
-
-  var MIN_KEY_LEN = 20;
 
   var MASTERY_LABEL = {
     "new": "New",
@@ -2796,23 +3112,14 @@
     el.error.hidden = false;
   }
 
+  /* ElpAuth decides how this device is connected (its own paired key, or the
+     legacy sync key). Exactly one auth header comes back. */
   function config() {
-    var apiEl = byId("syncApi");
-    var keyEl = byId("syncKey");
-    return {
-      base: String((apiEl && apiEl.value) || "").trim().replace(/\/+$/, ""),
-      key: String((keyEl && keyEl.value) || "").trim()
-    };
+    return { base: window.ElpAuth.getApiBase(), headers: window.ElpAuth.getAuthHeaders() };
   }
 
-  function configProblem(cfg) {
-    if (!cfg.base) { return "Worker URL is empty. Fill it in the Cloud sync card and press Save."; }
-    if (!/^https?:\/\//i.test(cfg.base)) { return "Worker URL must start with https://"; }
-    if (!cfg.key) { return "Sync key is empty. Press Generate in the Cloud sync card, then Save."; }
-    if (cfg.key.length < MIN_KEY_LEN) {
-      return "Sync key is only " + cfg.key.length + " characters. At least " + MIN_KEY_LEN + " are required.";
-    }
-    return null;
+  function configProblem() {
+    return window.ElpAuth.authProblem();
   }
 
   function setBusy(v) {
@@ -2832,7 +3139,7 @@
 
     var init = {
       method: method,
-      headers: { "X-Sync-Key": cfg.key },
+      headers: cfg.headers,
       mode: "cors",
       cache: "no-store",
       credentials: "omit"
@@ -2844,6 +3151,7 @@
 
     var started = Date.now();
     return fetch(cfg.base + path, init).then(function (res) {
+      window.ElpAuth.reportStatus(res.status);
       return res.text().then(function (text) {
         var elapsed = Date.now() - started;
         var data = null;
@@ -3566,9 +3874,9 @@
    Its own IIFE, like every other section, so a failure here cannot take
    down the microphone, speech, sync, AI, Today's Plan or Vocabulary cards.
 
-   It reads the Worker URL and sync key straight out of the Cloud sync
-   card's inputs, exactly as the other product cards do: one place to
-   configure, one identity, no chance of the two drifting apart.
+   It authenticates through the shared ElpAuth script, exactly as the
+   other product cards do: one place that knows how this device is
+   connected, one identity, no chance of the two drifting apart.
 
    No learning state is cached in this browser. Every exercise and every
    answer comes from D1 on each request, which is what makes "the Mac and
@@ -3583,7 +3891,6 @@
 (function () {
   "use strict";
 
-  var MIN_KEY_LEN = 20;
   var TYPE_LABEL = {
     fill_blank: "Fill in the blank",
     choice: "Choose the correct sentence",
@@ -3613,23 +3920,14 @@
     el.error.hidden = false;
   }
 
+  /* ElpAuth decides how this device is connected (its own paired key, or the
+     legacy sync key). Exactly one auth header comes back. */
   function config() {
-    var apiEl = byId("syncApi");
-    var keyEl = byId("syncKey");
-    return {
-      base: String((apiEl && apiEl.value) || "").trim().replace(/\/+$/, ""),
-      key: String((keyEl && keyEl.value) || "").trim()
-    };
+    return { base: window.ElpAuth.getApiBase(), headers: window.ElpAuth.getAuthHeaders() };
   }
 
-  function configProblem(cfg) {
-    if (!cfg.base) { return "Worker URL is empty. Fill it in the Cloud sync card and press Save."; }
-    if (!/^https?:\/\//i.test(cfg.base)) { return "Worker URL must start with https://"; }
-    if (!cfg.key) { return "Sync key is empty. Press Generate in the Cloud sync card, then Save."; }
-    if (cfg.key.length < MIN_KEY_LEN) {
-      return "Sync key is only " + cfg.key.length + " characters. At least " + MIN_KEY_LEN + " are required.";
-    }
-    return null;
+  function configProblem() {
+    return window.ElpAuth.authProblem();
   }
 
   function setBusy(v) {
@@ -3649,7 +3947,7 @@
 
     var init = {
       method: method,
-      headers: { "X-Sync-Key": cfg.key },
+      headers: cfg.headers,
       mode: "cors",
       cache: "no-store",
       credentials: "omit"
@@ -3661,6 +3959,7 @@
 
     var started = Date.now();
     return fetch(cfg.base + path, init).then(function (res) {
+      window.ElpAuth.reportStatus(res.status);
       return res.text().then(function (text) {
         var elapsed = Date.now() - started;
         var data = null;
@@ -4121,6 +4420,474 @@
         status("Could not reach the Worker. See the error above.");
       });
     }
+  }
+
+  try {
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", init);
+    } else {
+      init();
+    }
+  } catch (e) {
+    /* Every other section must keep working if this one fails. */
+    try { window.console && window.console.error && window.console.error(e); } catch (e2) { /* ignore */ }
+  }
+})();
+</script>
+<script>
+/* ------------------------------------------------------------------
+   Devices — connect this device, pair another one, manage devices.
+
+   Its own IIFE, like every other card. Everything credential-related
+   goes through ElpAuth: this card never reads, shows or sends a raw
+   device key itself, and the claim is made by ElpAuth.claimPairingCode,
+   which sends no auth header at all — the code is the only proof.
+
+   After connecting, the page reloads once, so Today's Plan, Vocabulary
+   and Sentence Practice all re-read the cloud with the new connection
+   instead of every card needing its own "reconnect" logic.
+
+   Nothing here calls AI.
+   ------------------------------------------------------------------ */
+(function () {
+  "use strict";
+
+  var SS_JUST_CONNECTED = "elp.device.justConnected";
+  var POLL_MS = 4000;
+
+  var el = {};
+  var busy = false;
+  var checking = false;
+  var pair = null;        // { code, expiresAtLocal, startedServerTime, expired }
+  var tickTimer = 0;
+  var pollTimer = 0;
+
+  function byId(id) { return document.getElementById(id); }
+  function status(msg) { if (el.status) { el.status.textContent = msg; } }
+
+  function clearError() {
+    if (!el.error) { return; }
+    el.error.textContent = "—";
+    el.error.hidden = true;
+  }
+
+  function showError(operation, lines) {
+    if (!el.error) { return; }
+    el.error.textContent = ["ERROR during: " + operation].concat(lines).join("\n");
+    el.error.hidden = false;
+  }
+
+  function setBusy(v) {
+    busy = v;
+    var buttons = el.card ? el.card.getElementsByTagName("button") : [];
+    for (var i = 0; i < buttons.length; i++) { buttons[i].disabled = v; }
+  }
+
+  function elem(tag, className, text) {
+    var n = document.createElement(tag);
+    if (className) { n.className = className; }
+    if (text !== undefined && text !== null) { n.textContent = text; }
+    return n;
+  }
+
+  function clear(node) {
+    while (node && node.firstChild) { node.removeChild(node.firstChild); }
+  }
+
+  function fmtDate(ms) {
+    var n = Number(ms);
+    if (!isFinite(n) || n <= 0) { return "—"; }
+    try {
+      return new Date(n).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+    } catch (e) {
+      return new Date(n).toISOString().slice(0, 10);
+    }
+  }
+
+  /* Deliberately does NOT call ElpAuth.reportStatus: this card is what
+     answers an auth-rejected event, so it handles its own 401s. */
+  function api(operation, method, path, bodyObj, quiet) {
+    var problem = window.ElpAuth.authProblem();
+    if (problem) {
+      var notReady = new Error(problem);
+      notReady.status = 0;
+      return Promise.reject(notReady);
+    }
+    var init = {
+      method: method,
+      headers: window.ElpAuth.getAuthHeaders(),
+      mode: "cors",
+      cache: "no-store",
+      credentials: "omit"
+    };
+    if (bodyObj !== undefined && bodyObj !== null) {
+      init.headers["Content-Type"] = "application/json";
+      init.body = JSON.stringify(bodyObj);
+    }
+    return fetch(window.ElpAuth.getApiBase() + path, init).then(function (res) {
+      return res.text().then(function (text) {
+        var data = null;
+        try { data = JSON.parse(text); } catch (e) { data = null; }
+        if (!res.ok || !data) {
+          var err = new Error("HTTP " + res.status);
+          err.status = res.status;
+          err.data = data;
+          if (!quiet && res.status !== 401) {
+            showError(operation, [method + " " + path, "HTTP " + res.status + " " + (res.statusText || ""), "", text.slice(0, 600) || "(empty body)"]);
+          }
+          throw err;
+        }
+        clearError();
+        return data;
+      });
+    }, function (networkErr) {
+      if (!quiet) {
+        showError(operation, [
+          method + " " + path,
+          "The request never reached the Worker.",
+          String((networkErr && networkErr.message) || networkErr)
+        ]);
+      }
+      var e = new Error("network");
+      e.status = 0;
+      throw e;
+    });
+  }
+
+  function isRevoked(e) {
+    return !!(e && e.status === 401 && e.data && e.data.error === "invalid_device_key");
+  }
+
+  /* ---------------- views ---------------- */
+
+  function showConnected(message) {
+    el.connectPane.hidden = true;
+    el.connectedPane.hidden = false;
+    el.chip.textContent = "Connected";
+    el.chip.className = "chip pass";
+    var method = window.ElpAuth.authMethod();
+    var info = window.ElpAuth.getDeviceInfo();
+    el.legacyNote.hidden = method !== "sync_key";
+    if (message) {
+      status(message);
+    } else if (method === "device_key") {
+      status("Connected" + (info && info.label ? " as “" + info.label + "”" : "") +
+             ". This device stays connected — nothing to enter again.");
+    } else {
+      status("Connected (with the legacy sync key). You can pair your other devices from here.");
+    }
+  }
+
+  function showNotConnected(message) {
+    stopPairing();
+    el.connectedPane.hidden = true;
+    el.connectPane.hidden = false;
+    el.chip.textContent = "Not connected";
+    el.chip.className = "chip";
+    status(message || "This device is not connected yet.");
+  }
+
+  function refreshView(message) {
+    if (window.ElpAuth.hasAuth()) { showConnected(message); } else { showNotConnected(message); }
+  }
+
+  /* ---------------- connect (new device) ---------------- */
+
+  function connect() {
+    if (busy) { return; }
+    var code = window.ElpAuth.normalizePairingCode(String(el.code.value || ""));
+    if (!code) {
+      status("Enter the 8-character code shown on your other device — for example AB7K-3M9Q.");
+      el.code.focus();
+      return;
+    }
+    setBusy(true);
+    clearError();
+    status("Connecting…");
+
+    window.ElpAuth.claimPairingCode(code, el.label.value).then(function (r) {
+      if (r.ok) {
+        el.code.value = "";
+        el.chip.textContent = "Connected";
+        el.chip.className = "chip pass";
+        status("Connected successfully. Loading your learning state…");
+        try { window.sessionStorage.setItem(SS_JUST_CONNECTED, "1"); } catch (e) { /* only the message */ }
+        // Stay busy: nothing should be pressed between here and the reload.
+        window.setTimeout(function () { window.location.reload(); }, 900);
+        return;
+      }
+      setBusy(false);
+      if (r.status === 200 && !r.stored) {
+        status("The code worked, but this browser refused to save the connection (private browsing or blocked " +
+               "site data). Allow site data, then pair again with a new code.");
+      } else if (r.data && r.data.message && (r.status === 400 || r.status === 429)) {
+        status(r.data.message);
+      } else if (r.status === 0) {
+        status("Enter the 8-character code shown on your other device — for example AB7K-3M9Q.");
+      } else {
+        status("Could not connect (HTTP " + r.status + "). Try again in a moment.");
+      }
+    }, function () {
+      setBusy(false);
+      status("Could not reach the server. Check this device's internet connection and try again.");
+    });
+  }
+
+  /* ---------------- pair another device ---------------- */
+
+  function startPairing() {
+    if (busy) { return; }
+    setBusy(true);
+    clearError();
+    status("Creating a pairing code…");
+    api("POST /pairing/start", "POST", "/pairing/start", null).then(function (data) {
+      pair = {
+        code: data.code,
+        // Counted down on this device's clock from the server's lifetime, so a
+        // wrong clock on either device cannot make the countdown lie.
+        expiresAtLocal: Date.now() + Number(data.expiresInSeconds || 600) * 1000,
+        startedServerTime: Number(data.serverTime) || 0,
+        expired: false
+      };
+      el.pairCode.textContent = data.code;
+      el.pairCode.className = "pair-code";
+      el.pairPane.hidden = false;
+      el.btnStart.hidden = true;
+      status("Code ready. It works once, for 10 minutes.");
+      startTimers();
+    })["catch"](function (e) {
+      handleError(e, "Could not create a code.");
+    })["then"](function () { setBusy(false); }, function () { setBusy(false); });
+  }
+
+  function startTimers() {
+    stopTimers();
+    tick();
+    tickTimer = window.setInterval(tick, 1000);
+    pollTimer = window.setInterval(poll, POLL_MS);
+  }
+
+  function stopTimers() {
+    if (tickTimer) { window.clearInterval(tickTimer); tickTimer = 0; }
+    if (pollTimer) { window.clearInterval(pollTimer); pollTimer = 0; }
+  }
+
+  function tick() {
+    if (!pair) { return; }
+    var left = Math.max(0, Math.round((pair.expiresAtLocal - Date.now()) / 1000));
+    if (left <= 0) {
+      stopTimers();
+      pair.expired = true;
+      el.pairCode.className = "pair-code expired";
+      el.pairExpiry.textContent = "This code has expired. Press New code to make another.";
+      return;
+    }
+    var m = Math.floor(left / 60);
+    var s = left % 60;
+    el.pairExpiry.textContent = "Expires in " + m + ":" + (s < 10 ? "0" : "") + s;
+  }
+
+  /* While a code is on screen, notice when the other device has used it. */
+  function poll() {
+    if (!pair || pair.expired) { return; }
+    var startedAt = pair.startedServerTime;
+    api("GET /devices", "GET", "/devices", null, true).then(function (data) {
+      if (!pair || pair.startedServerTime !== startedAt) { return; }
+      var fresh = (data.devices || []).filter(function (d) { return d.active && d.createdAt >= startedAt; });
+      renderDevices(data);
+      if (fresh.length) {
+        stopPairing();
+        status((fresh[0].label ? "“" + fresh[0].label + "”" : "Your other device") +
+               " is now connected. It sees the same plan, vocabulary and practice as this one.");
+      }
+    }, function (e) {
+      if (isRevoked(e)) { handleError(e, ""); }
+      /* otherwise just try again on the next tick */
+    });
+  }
+
+  function stopPairing() {
+    pair = null;
+    stopTimers();
+    if (el.pairPane) { el.pairPane.hidden = true; }
+    if (el.btnStart) { el.btnStart.hidden = false; }
+  }
+
+  function cancelPairing() {
+    if (!pair) { return; }
+    stopPairing();
+    api("POST /pairing/cancel", "POST", "/pairing/cancel", null, true).then(function () {
+      status("Code cancelled. It can no longer be used.");
+    }, function () {
+      status("Code hidden. It stops working on its own within 10 minutes.");
+    });
+  }
+
+  function copyCode() {
+    if (!pair) { return; }
+    function done(ok) {
+      el.btnCopy.textContent = ok ? "Copied" : "Copy not available";
+      window.setTimeout(function () { el.btnCopy.textContent = "Copy code"; }, 2000);
+    }
+    try {
+      if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+        navigator.clipboard.writeText(pair.code).then(function () { done(true); }, function () { done(false); });
+        return;
+      }
+    } catch (e) { /* fall through */ }
+    done(false);
+  }
+
+  /* ---------------- device list ---------------- */
+
+  function loadDevices(quiet) {
+    return api("GET /devices", "GET", "/devices", null, quiet).then(function (data) {
+      renderDevices(data);
+      return data;
+    });
+  }
+
+  function renderDevices(data) {
+    clear(el.list);
+    var all = data.devices || [];
+    var active = all.filter(function (d) { return d.active; });
+    el.legacyNote.hidden = data.authMethod !== "sync_key";
+
+    if (!active.length) {
+      el.list.appendChild(elem("p", "note", "No paired devices yet. Devices you connect with a code appear here."));
+    }
+    for (var i = 0; i < active.length; i++) {
+      (function (d) {
+        var row = elem("div", "vocab-row");
+        var main = elem("div", "main");
+        var name = elem("div", "en", d.label || "Unnamed device");
+        if (d.current) {
+          var chip = elem("span", "chip pass", "This device");
+          name.appendChild(chip);
+        }
+        main.appendChild(name);
+        main.appendChild(elem("div", "sub",
+          "Connected " + fmtDate(d.createdAt) + (d.lastUsedAt ? " · last active " + fmtDate(d.lastUsedAt) : "")));
+        var acts = elem("div", "acts");
+        var btn = elem("button", "mini reject", d.current ? "Disconnect" : "Remove");
+        btn.type = "button";
+        btn.addEventListener("click", function () { revoke(d); });
+        acts.appendChild(btn);
+        row.appendChild(main);
+        row.appendChild(acts);
+        el.list.appendChild(row);
+      })(active[i]);
+    }
+    var removed = all.length - active.length;
+    if (removed > 0) {
+      el.list.appendChild(elem("p", "note", removed + " removed device" + (removed === 1 ? "" : "s") + " no longer ha" + (removed === 1 ? "s" : "ve") + " access."));
+    }
+  }
+
+  function revoke(d) {
+    if (busy) { return; }
+    var msg = d.current
+      ? "Disconnect this device? You will need a new pairing code to connect it again."
+      : "Remove “" + (d.label || "Unnamed device") + "”? It loses access immediately and needs a new pairing code to reconnect.";
+    var ok = true;
+    try { ok = window.confirm(msg); } catch (e) { ok = true; }
+    if (!ok) { return; }
+
+    setBusy(true);
+    api("DELETE /devices/" + d.id, "DELETE", "/devices/" + encodeURIComponent(d.id), null).then(function (r) {
+      if (r.current) {
+        window.ElpAuth.clearDeviceCredential();
+        window.location.reload();
+        return;
+      }
+      status("Removed. That device can no longer reach your account.");
+      return loadDevices(true);
+    })["catch"](function (e) {
+      handleError(e, "Could not remove the device.");
+    })["then"](function () { setBusy(false); }, function () { setBusy(false); });
+  }
+
+  /* ---------------- connection check ---------------- */
+
+  function handleError(e, fallback) {
+    if (isRevoked(e)) {
+      window.ElpAuth.clearDeviceCredential();
+      refreshView("This device's connection was removed. Connect it again with a new code from another device.");
+      return;
+    }
+    if (fallback) { status(fallback + (e && e.status ? " (HTTP " + e.status + ")" : "")); }
+  }
+
+  /* On load, and whenever another card gets a 401: confirm the connection
+     still works. A revoked device key is cleared so the Connect form shows;
+     a legacy key, if this browser also has one, then takes over as before. */
+  function check(message) {
+    if (checking) { return; }
+    if (!window.ElpAuth.hasAuth()) {
+      showNotConnected(message);
+      return;
+    }
+    showConnected(message);
+    checking = true;
+    loadDevices(true).then(function () {
+      checking = false;
+    }, function (e) {
+      checking = false;
+      if (isRevoked(e)) {
+        handleError(e, "");
+      } else if (e && e.status === 0) {
+        status("Connected, but the server could not be reached just now.");
+      }
+    });
+  }
+
+  function init() {
+    el.card = byId("deviceCard");
+    el.chip = byId("deviceChip");
+    el.status = byId("deviceStatus");
+    el.error = byId("deviceError");
+    el.connectPane = byId("deviceConnectPane");
+    el.connectedPane = byId("deviceConnectedPane");
+    el.code = byId("devicePairCode");
+    el.label = byId("deviceLabel");
+    el.btnConnect = byId("btnDeviceConnect");
+    el.btnStart = byId("btnPairStart");
+    el.pairPane = byId("devicePairPane");
+    el.pairCode = byId("devicePairCodeShown");
+    el.pairExpiry = byId("devicePairExpiry");
+    el.btnCopy = byId("btnPairCopy");
+    el.btnNew = byId("btnPairNew");
+    el.btnCancel = byId("btnPairCancel");
+    el.manage = byId("deviceManage");
+    el.list = byId("deviceList");
+    el.legacyNote = byId("deviceLegacyNote");
+
+    if (!el.card || !el.connectPane || !el.connectedPane || !window.ElpAuth) { return; }
+
+    el.btnConnect.addEventListener("click", connect);
+    el.code.addEventListener("keydown", function (e) {
+      if (e.key === "Enter") { e.preventDefault(); connect(); }
+    });
+    el.btnStart.addEventListener("click", startPairing);
+    el.btnNew.addEventListener("click", function () { stopPairing(); startPairing(); });
+    el.btnCancel.addEventListener("click", cancelPairing);
+    el.btnCopy.addEventListener("click", copyCode);
+    el.manage.addEventListener("toggle", function () {
+      if (el.manage.open && window.ElpAuth.hasAuth()) { loadDevices(true)["catch"](function (e) { handleError(e, ""); }); }
+    });
+
+    /* Another card was refused — find out whether this device was removed. */
+    document.addEventListener("english:auth-rejected", function () { check(); });
+
+    clearError();
+
+    var justConnected = false;
+    try {
+      justConnected = window.sessionStorage.getItem(SS_JUST_CONNECTED) === "1";
+      window.sessionStorage.removeItem(SS_JUST_CONNECTED);
+    } catch (e) { /* ignore */ }
+
+    check(justConnected ? "Connected successfully. This device now shows the same learning state as your other devices." : "");
   }
 
   try {

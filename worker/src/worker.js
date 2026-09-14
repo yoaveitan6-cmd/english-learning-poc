@@ -8,11 +8,24 @@
  * else to the module that owns it.
  *
  * Identity model (single user, no login):
- *   The browser sends a long private sync key in the X-Sync-Key header.
- *   The Worker derives  owner_hash = HMAC-SHA256(SYNC_PEPPER, syncKey)  and
- *   uses only that hash to partition rows in D1. The raw key is never stored
- *   and never logged. SYNC_PEPPER is a Worker secret, so a leak of the D1
- *   contents alone does not allow offline brute-forcing of the sync key.
+ *   Rows in D1 are partitioned by owner_hash = HMAC-SHA256(SYNC_PEPPER, syncKey).
+ *   A request proves which owner it is in one of two ways (src/auth.js):
+ *     X-Device-Key  a per-device secret issued once by device pairing; D1
+ *                   stores only its HMAC, mapped to the owner that paired it,
+ *                   and each one can be revoked on its own. Preferred.
+ *     X-Sync-Key    the original long shared key, still accepted unchanged
+ *                   for backward compatibility and recovery.
+ *   Both resolve to the same owner_hash. No raw key is ever stored or logged,
+ *   and SYNC_PEPPER is a Worker secret, so a leak of the D1 contents alone
+ *   does not allow offline brute-forcing of either key.
+ *
+ * Device pairing (added stage 6), all in src/pairing_routes.js:
+ *   POST   /pairing/start           -> authenticated: a one-time code, valid 10 minutes
+ *   POST   /pairing/cancel          -> authenticated: withdraw that code
+ *   POST   /pairing/claim           -> NOT authenticated: code in, a new device key out, once
+ *   GET    /devices                 -> authenticated: this owner's paired devices
+ *   DELETE /devices/:id             -> authenticated: revoke one device, immediately
+ *   No AI is involved anywhere in pairing.
  *
  * Sync model:
  *   Record level only. POST upserts exactly one row, DELETE removes exactly
@@ -94,6 +107,8 @@ import {
 import { routeLearning, isLearningPath, recordAiUsage } from "./learning.js";
 import { routeVocab, isVocabPath } from "./vocab_routes.js";
 import { routeSentencePractice, isSentencePracticePath } from "./sentence_routes.js";
+import { routePairing, isPairingPath } from "./pairing_routes.js";
+import { authenticate } from "./auth.js";
 import { GENERATOR as PLANNER_GENERATOR } from "./planner.js";
 import {
   callGemini,
@@ -104,8 +119,6 @@ import {
 } from "./gemini.js";
 
 const MAX_TEXT_LEN = 500;   // per english/hebrew field
-const MIN_KEY_LEN = 20;     // reject weak sync keys outright
-const MAX_KEY_LEN = 512;
 const MAX_ID_LEN = 64;
 
 /* --- AI correction (stage 2) --- */
@@ -177,6 +190,12 @@ async function route(request, env, cors) {
       200,
       cors
     );
+  }
+
+  // Device pairing and device management. /pairing/claim is the one route
+  // that runs before authentication; routePairing authenticates the rest.
+  if (isPairingPath(path)) {
+    return routePairing(request, env, cors, path, method);
   }
 
   // Vocabulary MVP — its own /vocab/ namespace, deliberately not nested under
@@ -605,60 +624,9 @@ function validateFeedback(body, sentence) {
 
 /* ---------------- auth ---------------- */
 
-async function authenticate(request, env) {
-  if (!env.SYNC_PEPPER) {
-    return {
-      status: 500,
-      error: {
-        error: "server_not_configured",
-        message: "SYNC_PEPPER secret is not set. Run: npx wrangler secret put SYNC_PEPPER"
-      }
-    };
-  }
-
-  const key = request.headers.get("X-Sync-Key");
-  if (!key) {
-    return {
-      status: 401,
-      error: { error: "missing_sync_key", message: "X-Sync-Key header is required" }
-    };
-  }
-  if (key.length < MIN_KEY_LEN) {
-    return {
-      status: 401,
-      error: {
-        error: "sync_key_too_short",
-        message: "Sync key must be at least " + MIN_KEY_LEN + " characters. Use the Generate button."
-      }
-    };
-  }
-  if (key.length > MAX_KEY_LEN) {
-    return {
-      status: 401,
-      error: { error: "sync_key_too_long", message: "Sync key must be at most " + MAX_KEY_LEN + " characters" }
-    };
-  }
-
-  return { ownerHash: await hashSyncKey(key, env.SYNC_PEPPER) };
-}
-
-async function hashSyncKey(syncKey, pepper) {
-  const enc = new TextEncoder();
-  const cryptoKey = await crypto.subtle.importKey(
-    "raw",
-    enc.encode(pepper),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"]
-  );
-  const sig = await crypto.subtle.sign("HMAC", cryptoKey, enc.encode(syncKey));
-  const bytes = new Uint8Array(sig);
-  let out = "";
-  for (let i = 0; i < bytes.length; i++) {
-    out += bytes[i].toString(16).padStart(2, "0");
-  }
-  return out;
-}
+/* authenticate() and the owner_hash derivation now live in auth.js, which
+   also accepts a per-device X-Device-Key issued by pairing. Every caller here
+   still receives the same { ownerHash } it always did. */
 
 /* ---------------- CORS ---------------- */
 
@@ -680,7 +648,7 @@ function corsHeaders(origin, env) {
   if (origin && isAllowedOrigin(origin, env)) {
     h["Access-Control-Allow-Origin"] = origin;
     h["Access-Control-Allow-Methods"] = "GET, POST, PATCH, DELETE, OPTIONS";
-    h["Access-Control-Allow-Headers"] = "Content-Type, X-Sync-Key";
+    h["Access-Control-Allow-Headers"] = "Content-Type, X-Sync-Key, X-Device-Key";
     h["Access-Control-Max-Age"] = "86400";
   }
   return h;

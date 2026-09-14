@@ -31,6 +31,8 @@ Everything below fits inside Cloudflare's **free plan**. No credit card is requi
 | `src/vocabulary.js` | yes | Pure vocabulary logic — scheduling, exercises, marking. No I/O. |
 | `src/vocab_routes.js` | yes | Vocabulary routes and prompts. Reads the API key from env, never stores it. |
 | `src/gemini.js` | yes | Shared Gemini transport. No key, only the code that sends one. |
+| `src/auth.js` | yes | Resolves `X-Device-Key` / `X-Sync-Key` to `owner_hash`. Hashing code only, no secret. |
+| `src/pairing_routes.js` | yes | Pairing codes and device management. Stores only HMACs. |
 | `wrangler.toml` | **no — gitignored** | Holds your D1 `database_id`. |
 | your Cloudflare account ID | **no — never in a tracked file** | Passed as `CLOUDFLARE_ACCOUNT_ID` at the command line. |
 | `SYNC_PEPPER` | **no — never on disk** | Stored as a Cloudflare Worker secret. |
@@ -126,8 +128,10 @@ Do not re-run `wrangler secret put SYNC_PEPPER`: changing the pepper changes eve
 
 ## API
 
-Auth on every `/vocabulary` request: header `X-Sync-Key: <your long key>` (min 20 chars).
-The Worker computes `owner_hash = HMAC-SHA256(SYNC_PEPPER, syncKey)` and stores only that.
+Auth on every route below: header `X-Device-Key: <this device's key>` (issued by
+pairing — see *Device pairing*) or the legacy `X-Sync-Key: <your long key>` (min 20 chars).
+The Worker computes `owner_hash = HMAC-SHA256(SYNC_PEPPER, syncKey)` and stores only that;
+a device key resolves to the same `owner_hash` through its stored HMAC.
 
 | Method | Path | Body | Returns |
 |---|---|---|---|
@@ -181,6 +185,97 @@ replaces or clears the whole collection, so one device can never wipe another's 
 * `ALLOWED_ORIGINS` restricts which websites a browser will let call this Worker.
 * This is deliberately not a login system. It is the smallest thing that keeps a
   reader of the public repository from reaching your data.
+
+---
+
+## Device pairing (stage 6)
+
+Connecting a new device no longer means copying the long sync key. An
+already-connected device shows a short one-time code; the new device types it
+in and receives **its own** credential.
+
+```
+connected device ── POST /pairing/start ──> Worker   (authenticated)
+                 <── { code: "AB7K-3M9Q", expiresAt }
+new device       ── POST /pairing/claim { code } ──> Worker   (no credential)
+                 <── { deviceKey }  — returned once, stored in that browser
+new device       ── X-Device-Key: dk_… ──> every existing route
+```
+
+### One identity, two credentials
+
+`authenticate()` (in `src/auth.js`) accepts either header and resolves both to
+the same internal `owner_hash`, which is still `HMAC-SHA256(SYNC_PEPPER,
+syncKey)`, unchanged. Route modules only ever see that hash.
+
+| Header | What it is | Stored in D1 |
+|---|---|---|
+| `X-Device-Key` | per-device, `dk_` + 256 random bits, issued once by a claim. Preferred. | `HMAC-SHA256(SYNC_PEPPER, "elp:device-key:v1:" + key)` → `owner_hash` |
+| `X-Sync-Key` | the original shared key. Kept for backward compatibility and recovery. | nothing — `owner_hash` is derived from it |
+
+If a request carries `X-Device-Key`, that header alone decides: an unknown or
+revoked device key is refused even when an `X-Sync-Key` is also present. The
+browser never sends both.
+
+Pairing never creates an identity, copies data, or re-runs anything. A paired
+device simply **is** the owner that issued the code: the same plan, completions,
+vocabulary, sentence sessions and summaries.
+
+### Pairing codes
+
+* 8 characters from `23456789ABCDEFGHJKMNPQRSTUVWXYZ` (no `0/O`, `1/I/L`), shown
+  as `XXXX-XXXX`. 31⁸ ≈ 2³⁹·⁶ possibilities, drawn with rejection sampling so
+  every character is equally likely.
+* Valid for **10 minutes**, usable **once**. Starting a new code cancels the
+  owner's previous unclaimed one, so each owner has at most one live code.
+* Only `HMAC-SHA256(SYNC_PEPPER, "elp:pairing-code:v1:" + code)` is stored.
+* Claiming is a single conditional `UPDATE … WHERE consumedAt IS NULL AND
+  expiresAt > now`. However many claims race, exactly one changes the row.
+* Every failure — unknown, one character off, expired, used, cancelled,
+  malformed — returns the identical `400 invalid_pairing_code`.
+* Failed claims are counted per 10-minute window (a single counter; no IP or
+  device is recorded). After 100 in a window, claims return `429` until the
+  window ends. That caps guessing at a few hundred attempts over a code's whole
+  lifetime: a success chance around 10⁻⁹ per live code.
+
+`/pairing/claim` is the one route that runs before authentication. Its security
+rests on the code's entropy, expiry, one-time use and the failure ceiling. It
+does not rely on CORS, although CORS still applies to it like every other route.
+
+### API
+
+| Method | Path | Auth | Body | Returns |
+|---|---|---|---|---|
+| `POST` | `/pairing/start` | yes | — | `{ code, expiresAt, expiresInSeconds, serverTime }` |
+| `POST` | `/pairing/cancel` | yes | — | `{ cancelled }` |
+| `POST` | `/pairing/claim` | **no** | `{ code, label? }` | `{ connected, deviceKey, device: { id, label, createdAt } }` |
+| `GET` | `/devices` | yes | — | `{ authMethod, currentDeviceId, devices: [{ id, label, createdAt, lastUsedAt, revokedAt, active, current }], activeCount }` |
+| `DELETE` | `/devices/:id` | yes | — | `{ id, revoked, alreadyRevoked, current }`; `404` for another owner's device |
+
+No response contains a credential hash, an `owner_hash`, the pepper or a sync
+key. The raw device key appears in exactly one response: the claim that
+created it. A revoked device key stops working on its very next request.
+
+### In the browser
+
+`index.html` has one shared `ElpAuth` script. Every card asks it for the base
+URL and the auth header, so no card knows there are two credentials:
+
+1. the device key (`localStorage["elp.device.credential"]`), if present
+2. otherwise the legacy sync key, as before
+
+The raw sync-key controls moved into a collapsed **Advanced / legacy sync
+debugging** section. The normal first-run experience is **Devices → Connect this
+device**. Browser storage is per context: Safari, Chrome, an in-app browser and a
+Home Screen app each keep their own, so each one is paired separately, which
+takes a few seconds.
+
+### Not done yet
+
+* The legacy sync key itself cannot be revoked. It is the identity, and
+  rotating it would orphan the data. A device still using it keeps working
+  until that key is removed from that browser.
+* No QR code. The short code already removes the long-key problem.
 
 ---
 
@@ -457,6 +552,15 @@ accounting can never break the feature it measures.
 migration files themselves, so a destructive migration fails CI rather than
 production.
 
+Migration 0005 adds three tables for device pairing and touches none of the
+existing ones: `device_credential` (one row per paired device — an HMAC of its
+key, the `owner_hash` it belongs to, an optional label, created/last-used/revoked
+times), `device_pairing_session` (an HMAC of each short code, its owner, expiry
+and consumption) and `pairing_claim_window` (one failed-claim counter per
+10-minute window). No raw secret, User-Agent or IP address is stored, and no
+existing `owner_hash` changes meaning — a paired device is simply authenticated
+as one.
+
 Migration 0003 adds four tables and touches none of the existing ones. The three
 vocabulary sources and the approval flow needed **no** new schema at all: they
 are the `source` and `approval` columns migration 0002 already added to
@@ -509,6 +613,24 @@ completion carried across every session-mode transition (including a round trip
 through a mode that excludes the activity), date-boundary behaviour, migration
 additivity, and the assertions that planning makes zero network calls and that
 no response ever contains the API key, the pepper or the sync key.
+
+For device pairing (`pairing.test.js`, `frontend_auth.test.js`): pairing start
+requires auth by either header; code format, alphabet, uniformity and entropy;
+no raw code or device key anywhere in D1 (every table is dumped and searched);
+HMACs match an independent `node:crypto` computation; a claim attaches to the
+exact initiating `owner_hash` and creates no second profile; one-time use,
+including twelve concurrent claims of one code; expiry; identical responses for
+every failure; the failed-claim ceiling; a claim body or header cannot choose an
+owner; a device key reaches Today's Plan, Vocabulary, Sentence Practice
+(session, answers, durable summary) and AI correction as the same owner, in both
+directions; wrong, tampered and revoked keys are refused; another owner's device
+can neither see nor revoke anything; the legacy sync key is unchanged; zero
+network calls; no leakage in any response; and CORS. The browser tests run the
+real `ElpAuth` script out of `index.html` in a sandbox: device key preferred,
+exactly one header in all 36 credential combinations, survival across a reload,
+refusal to report a connection a browser would not store, a claim that carries
+no credential, browser/Worker agreement on the code format, and static checks
+that no card builds its own credential header any more.
 
 For Vocabulary specifically: the review schedule's response to success, failure,
 repeated failure, mastery and regression; deterministic session composition

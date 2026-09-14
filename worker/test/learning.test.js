@@ -872,8 +872,8 @@ test("every migration is additive: no DROP, DELETE, ALTER or TRUNCATE", () => {
     assert.ok(!/\bALTER\s+TABLE\b/i.test(code), name + " must not ALTER an existing table");
     assert.ok(!/\bTRUNCATE\b/i.test(code), name + " must not TRUNCATE");
     // Everything it does create must tolerate being applied twice.
-    const creates = code.match(/CREATE\s+(TABLE|INDEX)/gi) || [];
-    const guarded = code.match(/CREATE\s+(TABLE|INDEX)\s+IF\s+NOT\s+EXISTS/gi) || [];
+    const creates = code.match(/CREATE\s+(UNIQUE\s+)?(TABLE|INDEX)/gi) || [];
+    const guarded = code.match(/CREATE\s+(UNIQUE\s+)?(TABLE|INDEX)\s+IF\s+NOT\s+EXISTS/gi) || [];
     assert.equal(creates.length, guarded.length, name + " must guard every CREATE with IF NOT EXISTS");
   }
 });
